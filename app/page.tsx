@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { loadQuestionBank, type AppQuestion } from "../lib/question-bank";
 
 const areas = [
   { id: "inicio", icon: "⌂", title: "Início", detail: "Seu painel de preparação" },
@@ -18,7 +19,7 @@ const subjects = [
   { name: "História e Geografia", description: "Tópicos a confirmar no edital aplicável", progress: 0 }
 ];
 
-const questions = [
+const localQuestions: AppQuestion[] = [
   {
     id: "portugues-01",
     subject: "Língua Portuguesa",
@@ -75,6 +76,10 @@ const questions = [
 
 export default function Home() {
   const [active, setActive] = useState("inicio");
+  const [questions, setQuestions] = useState<AppQuestion[]>(localQuestions);
+  const [bankLoading, setBankLoading] = useState(true);
+  const [bankError, setBankError] = useState(false);
+  const [displaySubjects, setDisplaySubjects] = useState(subjects);
   const [answer, setAnswer] = useState("");
   const [checked, setChecked] = useState(false);
   const [totalAnswered, setTotalAnswered] = useState(0);
@@ -110,6 +115,69 @@ export default function Home() {
   const simAttempted = questions.filter(
     (question) => Boolean(simAnswers[question.id])
   ).length;
+  useEffect(() => {
+    let cancelled = false;
+
+    loadQuestionBank()
+      .then((result) => {
+        if (cancelled) return;
+
+        // Atualiza as disciplinas com os dados recebidos do Supabase.
+        // Se o banco não retornar disciplinas, preserva a lista local.
+        if (result.subjects.length > 0) {
+          setDisplaySubjects(
+            result.subjects.map((subject) => ({
+              name: subject.name,
+              description:
+                subject.slug === "lingua-portuguesa"
+                  ? "Interpretação de texto e gramática"
+                  : subject.slug === "matematica-basica"
+                    ? "Fundamentos e resolução de problemas"
+                    : subject.slug === "direitos-humanos"
+                      ? "Princípios e garantias fundamentais"
+                      : subject.slug === "direito-administrativo-legislacao-pmerj"
+                        ? "Administração pública e legislação aplicada à PMERJ"
+                        : subject.slug === "direito-penal-processual-penal"
+                          ? "Noções de direito penal e processo penal"
+                          : "Conteúdo cadastrado no banco de questões.",
+              progress: 0,
+            }))
+          );
+        }
+
+        // Mantém as questões locais para preservar IDs e histórico.
+        // Acrescenta as questões publicadas no Supabase sem duplicar IDs.
+        const combined = [...localQuestions, ...result.questions];
+        const unique = new Map(
+          combined.map((question) => [question.id, question])
+        );
+
+        setQuestions([...unique.values()]);
+        setBankError(Boolean(result.error));
+
+        if (result.error) {
+          console.warn(
+            "Não foi possível carregar completamente o banco online.",
+            result.error
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+
+        setQuestions(localQuestions);
+        setBankError(true);
+        console.warn("Falha ao consultar o banco online.", error);
+      })
+      .finally(() => {
+        if (!cancelled) setBankLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem("rumo-a-farda-stats-v1");
@@ -150,9 +218,7 @@ export default function Home() {
           Array.isArray(data) &&
           data.every((id) => typeof id === "string")
         ) {
-          setErrorIds([...new Set(data)].filter((id) =>
-            questions.some((question) => question.id === id)
-          ));
+          setErrorIds([...new Set(data)]);
         }
       }
     } catch (error) {
@@ -362,7 +428,7 @@ export default function Home() {
             <div className="section-title"><div><span className="eyebrow dark-eyebrow">VISÃO GERAL</span><h2>Sua preparação</h2></div><span className="demo-label">PAINEL INICIAL</span></div>
 
             <section className="stats-grid">
-              <article className="stat-card"><span className="stat-icon">▤</span><small>Disciplinas</small><strong>04</strong><span className="stat-foot">na estrutura inicial</span></article>
+              <article className="stat-card"><span className="stat-icon">▤</span><small>Disciplinas</small><strong>{displaySubjects.length.toString().padStart(2, "0")}</strong><span className="stat-foot">cadastradas</span></article>
               <article className="stat-card"><span className="stat-icon">☷</span><small>Questões respondidas</small><strong>{totalAnswered}</strong><span className="stat-foot">salvas neste aparelho</span></article>
               <article className="stat-card"><span className="stat-icon">↗</span><small>Seu desempenho</small><strong>{accuracy === null ? "—" : `${accuracy}%`}</strong><span className="stat-foot">taxa de acerto</span></article>
             </section>
@@ -370,7 +436,7 @@ export default function Home() {
             <section className="content-panel">
               <div className="panel-heading"><div><span className="eyebrow dark-eyebrow">COMECE POR AQUI</span><h2>Áreas de estudo</h2></div><button className="text-button" onClick={() => setActive("disciplinas")}>Ver todas ↗</button></div>
               <div className="subject-grid">
-                {subjects.map((subject, index) => (
+                {displaySubjects.map((subject, index) => (
                   <button className="subject-card" key={subject.name} onClick={() => setActive("disciplinas")}>
                     <span className="subject-number">0{index + 1}</span><h3>{subject.name}</h3><p>{subject.description}</p><span className="card-arrow">↗</span>
                   </button>
@@ -386,12 +452,22 @@ export default function Home() {
             <span className="eyebrow dark-eyebrow">CONTEÚDO ORGANIZADO</span>
             <h1>Disciplinas</h1><p className="page-intro">Construa sua base de conhecimento, uma matéria por vez.</p>
             <div className="subject-grid">
-              {subjects.map((subject, index) => (
+              {displaySubjects.map((subject, index) => (
                 <article className="subject-card" key={subject.name}>
                   <span className="subject-number">0{index + 1}</span><h3>{subject.name}</h3><p>{subject.description}</p>
                   <div className="progress-track"><span style={{ width: `${subject.progress}%` }} /></div>
                   <small className="progress-caption">Progresso inicial: 0%</small>
-                  <button className="secondary-button" onClick={() => setActive("questoes")}>Praticar questões →</button>
+                  <button className="secondary-button" onClick={() => {
+                    setSubjectFilter(
+                      subject.name === "Matemática Básica"
+                        ? "Matemática"
+                        : subject.name
+                    );
+                    setQuestionIndex(0);
+                    setAnswer("");
+                    setChecked(false);
+                    setActive("questoes");
+                  }}>Praticar questões →</button>
                 </article>
               ))}
             </div>
@@ -404,8 +480,10 @@ export default function Home() {
             <span className="eyebrow dark-eyebrow">TREINO DE CONHECIMENTO</span>
             <h1>Banco de questões</h1>
             <p className="page-intro">Escolha uma disciplina para praticar.</p>
+            {bankLoading && <p className="disclaimer">Carregando questões disponíveis...</p>}
+            {bankError && <p className="disclaimer">O banco online não pôde ser carregado completamente. As questões locais continuam disponíveis.</p>}
             <div className="filter-row" aria-label="Filtrar questões por disciplina">
-              {["Todas", "Língua Portuguesa", "Matemática"].map((subject) => (
+              {["Todas", ...Array.from(new Set(questions.map((question) => question.subject)))].map((subject) => (
                 <button
                   key={subject}
                   type="button"
@@ -417,42 +495,60 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <p className="page-intro">
-              Questão {questionIndex + 1} de {filteredQuestions.length}. Responda e confira a explicação.
-            </p>
-            <article className="question-card">
-              <span className="question-tag">{currentQuestion.subject.toUpperCase()} • QUESTÃO AUTORAL</span>
-              <h2>{currentQuestion.prompt}</h2>
-              {currentQuestion.options.map(([letter, label]) => (
-                <button
-                  key={letter}
-                  className={`answer-option ${answer === letter ? "answer-selected" : ""} ${checked && letter === currentQuestion.correctAnswer ? "answer-correct" : ""} ${checked && answer === letter && letter !== currentQuestion.correctAnswer ? "answer-wrong" : ""}`}
-                  disabled={checked}
-                  onClick={() => setAnswer(letter)}
-                >
-                  <span>{letter.toUpperCase()}</span>{label}
+            {currentQuestion ? (
+              <>
+                <p className="page-intro">
+                  Questão {questionIndex + 1} de {filteredQuestions.length}. Responda e confira a explicação.
+                </p>
+                <article className="question-card">
+                  <div className="question-meta">
+                    <span>{currentQuestion.subject}</span>
+                    <span>Questão autoral</span>
+                  </div>
+                  <h2>{currentQuestion.prompt}</h2>
+                  <div className="options-list">
+                    {currentQuestion.options.map(([key, text]) => (
+                      <button
+                        key={key}
+                        className={`option-button ${answer === key ? "option-selected" : ""} ${checked && key === currentQuestion.correctAnswer ? "option-correct" : ""} ${checked && answer === key && answer !== currentQuestion.correctAnswer ? "option-wrong" : ""}`}
+                        onClick={() => !checked && setAnswer(key)}
+                        disabled={checked}
+                      >
+                        <span className="option-letter">{key.toUpperCase()}</span>
+                        <span>{text}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {!checked ? (
+                    <button className="primary-button" disabled={!answer} onClick={checkAnswer}>
+                      CONFERIR RESPOSTA →
+                    </button>
+                  ) : (
+                    <div className={`feedback ${answer === currentQuestion.correctAnswer ? "feedback-correct" : "feedback-wrong"}`}>
+                      <strong>{answer === currentQuestion.correctAnswer ? "Resposta correta!" : "Resposta incorreta. Revise o conteúdo."}</strong>
+                      <p>{currentQuestion.explanation}</p>
+                      <button
+                        className="primary-button"
+                        onClick={() => goToQuestion(questionIndex + 1)}
+                      >
+                        PRÓXIMA QUESTÃO →
+                      </button>
+                    </div>
+                  )}
+                  <p className="disclaimer">
+                    Questões autorais para prática. Este banco inicial não representa o conteúdo oficial completo da prova.
+                  </p>
+                </article>
+              </>
+            ) : (
+              <article className="question-card">
+                <h2>Nenhuma questão disponível nesta disciplina ainda.</h2>
+                <p>As questões desta matéria ainda não foram publicadas. Você pode voltar e consultar todas as questões disponíveis.</p>
+                <button className="secondary-button" onClick={() => changeSubjectFilter("Todas")}>
+                  Ver todas as questões
                 </button>
-              ))}
-              {!checked ? (
-                <button className="primary-button" disabled={!answer} onClick={checkAnswer}>
-                  CONFERIR RESPOSTA →
-                </button>
-              ) : (
-                <div className={`feedback ${answer === currentQuestion.correctAnswer ? "feedback-correct" : "feedback-wrong"}`}>
-                  <strong>{answer === currentQuestion.correctAnswer ? "Resposta correta!" : "Resposta incorreta. Revise o conteúdo."}</strong>
-                  <p>{currentQuestion.explanation}</p>
-                  <button
-                    className="primary-button"
-                    onClick={() => goToQuestion(questionIndex + 1)}
-                  >
-                    PRÓXIMA QUESTÃO →
-                  </button>
-                </div>
-              )}
-              <p className="disclaimer">
-                Questões autorais para prática. Este banco inicial não representa o conteúdo oficial completo da prova.
-              </p>
-            </article>
+              </article>
+            )}
             <p className="disclaimer">
               Seu progresso e caderno de erros ficam salvos neste navegador.
             </p>
@@ -480,10 +576,26 @@ export default function Home() {
               ) : (
                 <>
                   <div className="history-summary">
-                    <span>Melhor aproveitamento</span>
-                    <strong>
-                      {Math.max(...simHistory.map((item) => item.percent))}%
-                    </strong>
+                    <div>
+                      <span>Melhor aproveitamento geral</span>
+                      <strong>
+                        {Math.max(...simHistory.map((item) => item.percent))}%
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Melhor entre respondidas</span>
+                      <strong>
+                        {simHistory.some((item) => item.attempted > 0)
+                          ? Math.max(
+                              ...simHistory
+                                .filter((item) => item.attempted > 0)
+                                .map((item) =>
+                                  Math.round((item.correct / item.attempted) * 100)
+                                )
+                            ) + "%"
+                          : "—"}
+                      </strong>
+                    </div>
                   </div>
 
                   <div className="simulado-history-list">
@@ -497,7 +609,7 @@ export default function Home() {
                             </strong>
                             {item.percent === Math.max(...simHistory.map((entry) => entry.percent)) && (
                               <span className="history-best-label">
-                                Melhor resultado
+                                Melhor geral
                               </span>
                             )}
                             <p>{new Date(item.date).toLocaleString("pt-BR")}</p>
@@ -505,9 +617,14 @@ export default function Home() {
                               {item.correct} acerto(s) · {item.attempted}/{item.total} respondida(s)
                             </small>
                           </div>
-                          <strong className="simulado-history-score">
-                            {item.percent}%
-                          </strong>
+                          <div className="simulado-history-score">
+                            <strong>{item.percent}% geral</strong>
+                            <small>
+                              {item.attempted > 0
+                                ? `${Math.round((item.correct / item.attempted) * 100)}% entre respondidas`
+                                : "— entre respondidas"}
+                            </small>
+                          </div>
                         </div>
                       ))}
                   </div>
@@ -686,8 +803,16 @@ export default function Home() {
                       <strong>{simCorrect}/{questions.length}</strong>
                     </div>
                     <div className="stat-card">
-                      <small>Aproveitamento</small>
+                      <small>Aproveitamento geral</small>
                       <strong>{Math.round((simCorrect / questions.length) * 100)}%</strong>
+                    </div>
+                    <div className="stat-card">
+                      <small>Aproveitamento entre respondidas</small>
+                      <strong>
+                        {simAttempted > 0
+                          ? Math.round((simCorrect / simAttempted) * 100) + "%"
+                          : "—"}
+                      </strong>
                     </div>
                     <div className="stat-card">
                       <small>Respondidas</small>
@@ -790,6 +915,7 @@ export default function Home() {
                         onClick={() => {
                           const index = questions.findIndex((item) => item.id === id);
                           if (index >= 0) {
+                            setSubjectFilter("Todas");
                             setQuestionIndex(index);
                             setAnswer("");
                             setChecked(false);

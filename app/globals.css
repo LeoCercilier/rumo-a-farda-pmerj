@@ -107,3 +107,88 @@ button.subject-card{cursor:pointer}
 .history-confirm-actions{display:flex;flex-wrap:wrap;gap:8px}
 .history-confirm-actions .secondary-button,.history-confirm-actions .primary-button{margin-top:0}
 
+
+/* Alternativas do banco de questões — Rumo à Farda */
+.option-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  margin: 9px 0;
+  text-align: left;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.option-button .option-letter {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #dce1d8;
+  border-radius: 50%;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.option-button.option-selected {
+  border: 2px solid #9b895a;
+  padding: 13px;
+  background: #f7f2e4;
+  box-shadow: 0 0 0 2px rgb(155 137 90 / 15%);
+}
+
+.option-button.option-selected .option-letter {
+  color: #fff;
+  border-color: #887545;
+  background: #887545;
+}
+
+.option-button.option-correct {
+  border: 2px solid #36815a;
+  padding: 13px;
+  background: #edf8f0;
+}
+
+.option-button.option-correct .option-letter {
+  color: #fff;
+  border-color: #36815a;
+  background: #36815a;
+}
+
+.option-button.option-wrong {
+  border: 2px solid #bd5b54;
+  padding: 13px;
+  background: #fff1ef;
+}
+
+.option-button.option-wrong .option-letter {
+  color: #fff;
+  border-color: #bd5b54;
+  background: #bd5b54;
+}
+
+.option-button:focus-visible {
+  outline: 3px solid rgb(155 137 90 / 40%);
+  outline-offset: 3px;
+}
+
+.option-button:disabled {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option-button {
+    transition: none;
+  }
+}
