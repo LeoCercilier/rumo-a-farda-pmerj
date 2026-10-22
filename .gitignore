@@ -1,0 +1,46 @@
+# Segredos e variaveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Dependencias
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Build e testes
+dist/
+coverage/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Sistema e editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Chaves e certificados privados
+*.pem
+*.key
+
+# Arquivos locais
+*.local
+
+# Backups locais: preservar no dispositivo, não publicar
+*.bak
+*.backup-*
+
+# Scripts temporários usados para aplicar alterações
+aplicar-filtro-rf.py
+aplicar-historico-rf.py
+aplicar-simulado-rf.py
+melhorar-historico-rf.py
+
+# Arquivos auxiliares gerados pelo TypeScript
+*.tsbuildinfo
