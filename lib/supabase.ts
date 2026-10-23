@@ -1,3 +1,7 @@
+/**
+ * Cliente browser legado (compatibilidade).
+ * Preferir `lib/supabase/client.ts` e `lib/supabase/server.ts` em código novo.
+ */
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -10,7 +14,4 @@ if (!supabaseUrl || !supabasePublishableKey) {
   );
 }
 
-export const supabase = createClient(
-  supabaseUrl,
-  supabasePublishableKey
-);
+export const supabase = createClient(supabaseUrl, supabasePublishableKey);

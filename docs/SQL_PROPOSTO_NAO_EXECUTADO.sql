@@ -1,0 +1,159 @@
+-- =============================================================================
+-- SQL PROPOSTO — NÃO EXECUTADO
+-- =============================================================================
+-- Este arquivo é apenas documentação para o responsável pelo Supabase.
+-- NÃO rode este script sem revisão. Nenhuma migration automática foi criada.
+-- Projeto: rumo-a-farda-pmerj
+-- Data: 2026-10-23
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- 1) Perfis (opcional, recomendado)
+-- -----------------------------------------------------------------------------
+-- CREATE TABLE IF NOT EXISTS public.profiles (
+--   id uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
+--   email text,
+--   full_name text,
+--   created_at timestamptz NOT NULL DEFAULT now(),
+--   updated_at timestamptz NOT NULL DEFAULT now()
+-- );
+--
+-- ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+--
+-- CREATE POLICY "profiles_select_own"
+--   ON public.profiles FOR SELECT
+--   TO authenticated
+--   USING (id = auth.uid());
+--
+-- CREATE POLICY "profiles_update_own"
+--   ON public.profiles FOR UPDATE
+--   TO authenticated
+--   USING (id = auth.uid())
+--   WITH CHECK (id = auth.uid());
+
+-- -----------------------------------------------------------------------------
+-- 2) Assinaturas
+-- -----------------------------------------------------------------------------
+-- CREATE TABLE IF NOT EXISTS public.subscriptions (
+--   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+--   user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+--   status text NOT NULL
+--     CHECK (status IN (
+--       'none', 'pending', 'active', 'past_due', 'cancelled', 'expired', 'rejected'
+--     )),
+--   mp_subscription_id text UNIQUE,
+--   mp_preapproval_id text,
+--   plan_id text,
+--   current_period_start timestamptz,
+--   current_period_end timestamptz,
+--   cancelled_at timestamptz,
+--   raw_payload jsonb,
+--   created_at timestamptz NOT NULL DEFAULT now(),
+--   updated_at timestamptz NOT NULL DEFAULT now()
+-- );
+--
+-- CREATE INDEX IF NOT EXISTS subscriptions_user_id_idx
+--   ON public.subscriptions (user_id);
+--
+-- ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+--
+-- -- Usuário só lê a própria assinatura
+-- CREATE POLICY "subscriptions_select_own"
+--   ON public.subscriptions FOR SELECT
+--   TO authenticated
+--   USING (user_id = auth.uid());
+--
+-- -- NENHUMA policy de INSERT/UPDATE/DELETE para authenticated.
+-- -- Escrita apenas com service_role (webhook / Edge Function).
+
+-- -----------------------------------------------------------------------------
+-- 3) Proteção dos gabaritos (CRÍTICO)
+-- -----------------------------------------------------------------------------
+-- Opção recomendada: view pública sem gabarito + RPC para checagem.
+--
+-- CREATE OR REPLACE VIEW public.questions_public AS
+-- SELECT
+--   id,
+--   subject_id,
+--   topic_id,
+--   statement,
+--   options,
+--   difficulty,
+--   active
+-- FROM public.questions
+-- WHERE active = true;
+--
+-- -- Ajustar grants e RLS conforme a arquitetura atual.
+-- -- Revogar SELECT direto de correct_option/explanation para anon/authenticated
+-- -- se ainda existirem políticas amplas.
+--
+-- CREATE OR REPLACE FUNCTION public.check_question_answer(
+--   p_question_id uuid,
+--   p_selected_option text
+-- )
+-- RETURNS jsonb
+-- LANGUAGE plpgsql
+-- SECURITY DEFINER
+-- SET search_path = public
+-- AS $$
+-- DECLARE
+--   v_has_access boolean;
+--   v_row public.questions%ROWTYPE;
+--   v_selected text;
+-- BEGIN
+--   -- Verificar assinatura ativa do caller
+--   SELECT EXISTS (
+--     SELECT 1
+--     FROM public.subscriptions s
+--     WHERE s.user_id = auth.uid()
+--       AND s.status = 'active'
+--       AND (s.current_period_end IS NULL OR s.current_period_end > now())
+--   ) INTO v_has_access;
+--
+--   IF NOT v_has_access THEN
+--     RAISE EXCEPTION 'subscription_required' USING ERRCODE = '42501';
+--   END IF;
+--
+--   SELECT * INTO v_row
+--   FROM public.questions
+--   WHERE id = p_question_id AND active = true;
+--
+--   IF NOT FOUND THEN
+--     RAISE EXCEPTION 'question_not_found' USING ERRCODE = 'P0002';
+--   END IF;
+--
+--   v_selected := lower(trim(p_selected_option));
+--
+--   RETURN jsonb_build_object(
+--     'correct', lower(trim(v_row.correct_option)) = v_selected,
+--     'correctOption', lower(trim(v_row.correct_option)),
+--     'explanation', v_row.explanation
+--   );
+-- END;
+-- $$;
+--
+-- REVOKE ALL ON FUNCTION public.check_question_answer(uuid, text) FROM PUBLIC;
+-- GRANT EXECUTE ON FUNCTION public.check_question_answer(uuid, text) TO authenticated;
+
+-- -----------------------------------------------------------------------------
+-- 4) Trigger de profile (opcional)
+-- -----------------------------------------------------------------------------
+-- CREATE OR REPLACE FUNCTION public.handle_new_user()
+-- RETURNS trigger
+-- LANGUAGE plpgsql
+-- SECURITY DEFINER
+-- SET search_path = public
+-- AS $$
+-- BEGIN
+--   INSERT INTO public.profiles (id, email)
+--   VALUES (NEW.id, NEW.email)
+--   ON CONFLICT (id) DO NOTHING;
+--   RETURN NEW;
+-- END;
+-- $$;
+--
+-- -- CREATE TRIGGER on_auth_user_created
+-- --   AFTER INSERT ON auth.users
+-- --   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- FIM DO SQL PROPOSTO — NÃO EXECUTADO

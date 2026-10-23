@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { loadQuestionBank, type AppQuestion } from "../lib/question-bank";
+import Link from "next/link";
+import { type AppQuestion } from "../lib/question-bank";
+import { useAuth } from "../components/AuthProvider";
 
 const areas = [
   { id: "inicio", icon: "⌂", title: "Início", detail: "Seu painel de preparação" },
@@ -77,6 +79,16 @@ const localQuestions: AppQuestion[] = [
 export default function Home() {
   const [active, setActive] = useState("inicio");
   const [questions, setQuestions] = useState<AppQuestion[]>(localQuestions);
+  const { user, loading: authLoading, subscription, signOut } = useAuth();
+  const hasAccess = subscription?.hasAccess === true;
+  const [checkLoading, setCheckLoading] = useState(false);
+  const [checkResult, setCheckResult] = useState<{
+    correct: boolean;
+    correctOption: string;
+    explanation: string;
+  } | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
   const [bankLoading, setBankLoading] = useState(true);
   const [bankError, setBankError] = useState(false);
   const [bankDebug, setBankDebug] = useState("Consulta ao banco em andamento...");
@@ -111,7 +123,7 @@ export default function Home() {
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const simQuestion = questions[simIndex];
   const simCorrect = questions.filter(
-    (question) => simAnswers[question.id] === question.correctAnswer
+    (question) => Boolean(question.correctAnswer) && simAnswers[question.id] === question.correctAnswer
   ).length;
   const simAttempted = questions.filter(
     (question) => Boolean(simAnswers[question.id])
@@ -119,67 +131,63 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
 
-    loadQuestionBank()
-      .then((result) => {
+    async function loadBank() {
+      setBankLoading(true);
+      setBankError(false);
+      setBankDebug("Consulta ao banco em andamento...");
+
+      try {
+        const res = await fetch("/api/questions/bank", { credentials: "include" });
+        const result = await res.json();
+
         if (cancelled) return;
 
-        // Atualiza as disciplinas com os dados recebidos do Supabase.
-        // Se o banco não retornar disciplinas, preserva a lista local.
-        if (result.subjects.length > 0) {
+        if (result.subjects && result.subjects.length > 0) {
           setDisplaySubjects(
-            result.subjects.map((subject) => ({
+            result.subjects.map((subject: { name: string; slug: string }) => ({
               name: subject.name,
               description:
                 subject.slug === "lingua-portuguesa"
                   ? "Interpretação de texto e gramática"
-                  : subject.slug === "matematica-basica"
+                  : subject.slug === "matematica"
                     ? "Fundamentos e resolução de problemas"
-                    : subject.slug === "direitos-humanos"
-                      ? "Princípios e garantias fundamentais"
-                      : subject.slug === "direito-administrativo-legislacao-pmerj"
-                        ? "Administração pública e legislação aplicada à PMERJ"
-                        : subject.slug === "direito-penal-processual-penal"
-                          ? "Noções de direito penal e processo penal"
-                          : "Conteúdo cadastrado no banco de questões.",
+                    : "Conteúdo a confirmar no edital aplicável",
               progress: 0,
             }))
           );
         }
 
-        // Mantém as questões locais para preservar IDs e histórico.
-        // Acrescenta as questões publicadas no Supabase sem duplicar IDs.
-        const combined = [...localQuestions, ...result.questions];
-        const unique = new Map(
-          combined.map((question) => [question.id, question])
-        );
-
-        setQuestions([...unique.values()]);
-        setBankDebug(`Consulta concluída: ${result.questions.length} questões recebidas; total disponível: ${unique.size}; erro: ${result.error ? "sim" : "não"}.`);
-        setBankError(Boolean(result.error));
-
-        if (result.error) {
-          console.warn(
-            "Não foi possível carregar completamente o banco online.",
-            result.error
+        if (result.questions && result.questions.length > 0) {
+          setQuestions(result.questions);
+          setBankDebug(
+            `Banco carregado: ${result.questions.length} questões` +
+              (result.hasAccess ? " (assinatura ativa)." : " (sem gabarito até assinar).")
           );
+        } else if (result.error) {
+          setBankError(true);
+          setBankDebug(result.error);
+        } else {
+          setBankDebug("Nenhuma questão retornada pelo servidor.");
         }
-      })
-      .catch((error: unknown) => {
+      } catch (error) {
         if (cancelled) return;
-
-        setQuestions(localQuestions);
-        setBankDebug("Falha na consulta ao Supabase; questões locais preservadas.");
         setBankError(true);
-        console.warn("Falha ao consultar o banco online.", error);
-      })
-      .finally(() => {
+        setBankDebug(
+          error instanceof Error
+            ? error.message
+            : "Falha ao carregar o banco de questões."
+        );
+      } finally {
         if (!cancelled) setBankLoading(false);
-      });
+      }
+    }
+
+    void loadBank();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.id, subscription?.hasAccess]);
 
   useEffect(() => {
     try {
@@ -287,22 +295,66 @@ export default function Home() {
       ? Math.round((totalCorrect / totalAnswered) * 100)
       : null;
 
-  const checkAnswer = () => {
-    if (!answer || checked) return;
+  const checkAnswer = async () => {
+    if (!answer || checked || checkLoading) return;
+    if (!currentQuestion) return;
 
-    const isCorrect = answer === currentQuestion.correctAnswer;
-    setTotalAnswered((value) => value + 1);
-
-    if (isCorrect) {
-      setTotalCorrect((value) => value + 1);
-      setErrorIds((ids) => ids.filter((id) => id !== currentQuestion.id));
-    } else {
-      setErrorIds((ids) =>
-        ids.includes(currentQuestion.id) ? ids : [...ids, currentQuestion.id]
+    // Sem assinatura: não chama o endpoint de gabarito; orienta a assinar.
+    if (!hasAccess) {
+      setChecked(true);
+      setCheckResult(null);
+      setCheckError(
+        user
+          ? "Assinatura ativa necessária para corrigir e ver a explicação."
+          : "Faça login e assine para corrigir questões e ver explicações."
       );
+      return;
     }
 
-    setChecked(true);
+    setCheckLoading(true);
+    setCheckError(null);
+    setCheckResult(null);
+
+    try {
+      const res = await fetch("/api/questions/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          questionId: currentQuestion.id,
+          selectedOption: answer,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setCheckError(data.message || "Não foi possível corrigir a questão.");
+        setChecked(true);
+        return;
+      }
+
+      setCheckResult({
+        correct: Boolean(data.correct),
+        correctOption: String(data.correctOption || ""),
+        explanation: String(data.explanation || ""),
+      });
+
+      setTotalAnswered((value) => value + 1);
+      if (data.correct) {
+        setTotalCorrect((value) => value + 1);
+        setErrorIds((ids) => ids.filter((id) => id !== currentQuestion.id));
+      } else {
+        setErrorIds((ids) =>
+          ids.includes(currentQuestion.id) ? ids : [...ids, currentQuestion.id]
+        );
+      }
+      setChecked(true);
+    } catch {
+      setCheckError("Falha de comunicação ao corrigir a questão.");
+      setChecked(true);
+    } finally {
+      setCheckLoading(false);
+    }
   };
 
   const goToQuestion = (index: number) => {
@@ -310,6 +362,8 @@ export default function Home() {
     setQuestionIndex((index + filteredQuestions.length) % filteredQuestions.length);
     setAnswer("");
     setChecked(false);
+    setCheckResult(null);
+    setCheckError(null);
   };
 
   const changeSubjectFilter = (subject: string) => {
@@ -317,13 +371,15 @@ export default function Home() {
     setQuestionIndex(0);
     setAnswer("");
     setChecked(false);
+    setCheckResult(null);
+    setCheckError(null);
   };
 
   const finishSimulation = () => {
     if (simStatus !== "running") return;
 
     const correct = questions.filter(
-      (question) => simAnswers[question.id] === question.correctAnswer
+      (question) => Boolean(question.correctAnswer) && simAnswers[question.id] === question.correctAnswer
     ).length;
     const attempted = questions.filter(
       (question) => Boolean(simAnswers[question.id])
@@ -334,7 +390,7 @@ export default function Home() {
     setErrorIds((ids) => {
       const next = new Set(ids);
       questions.forEach((question) => {
-        if (simAnswers[question.id] === question.correctAnswer) {
+        if (question.correctAnswer && simAnswers[question.id] === question.correctAnswer) {
           next.delete(question.id);
         } else {
           next.add(question.id);
@@ -410,7 +466,24 @@ export default function Home() {
             <span className="breadcrumb">SUA JORNADA /</span>
             <span className="breadcrumb-current"> {current.title.toUpperCase()}</span>
           </div>
-          <span className="user-avatar">RF</span>
+          <div className="auth-bar">
+            {authLoading ? (
+              <span>Sessão...</span>
+            ) : user ? (
+              <>
+                <span title={user.email || ""}>{hasAccess ? "Premium" : "Conta"}</span>
+                <Link href="/assinatura">Assinatura</Link>
+                <button type="button" className="link-button" onClick={() => void signOut()}>
+                  Sair
+                </button>
+              </>
+            ) : (
+              <>
+                <Link href="/login">Entrar</Link>
+                <Link href="/cadastro">Cadastro</Link>
+              </>
+            )}
+          </div>
         </header>
 
         {active === "inicio" && (
@@ -516,7 +589,7 @@ export default function Home() {
                     {currentQuestion.options.map(([key, text]) => (
                       <button
                         key={key}
-                        className={`option-button ${answer === key ? "option-selected" : ""} ${checked && key === currentQuestion.correctAnswer ? "option-correct" : ""} ${checked && answer === key && answer !== currentQuestion.correctAnswer ? "option-wrong" : ""}`}
+                        className={`option-button ${answer === key ? "option-selected" : ""} ${checked && checkResult && key === checkResult.correctOption ? "option-correct" : ""} ${checked && checkResult && answer === key && answer !== checkResult.correctOption ? "option-wrong" : ""}`}
                         onClick={() => !checked && setAnswer(key)}
                         disabled={checked}
                       >
@@ -526,13 +599,50 @@ export default function Home() {
                     ))}
                   </div>
                   {!checked ? (
-                    <button className="primary-button" disabled={!answer} onClick={checkAnswer}>
-                      CONFERIR RESPOSTA →
+                    <button
+                      className="primary-button"
+                      disabled={!answer || checkLoading}
+                      onClick={() => void checkAnswer()}
+                    >
+                      {checkLoading ? "CORRIGINDO..." : "CONFERIR RESPOSTA →"}
                     </button>
+                  ) : checkResult ? (
+                    <div
+                      className={`feedback ${
+                        checkResult.correct ? "feedback-correct" : "feedback-wrong"
+                      }`}
+                    >
+                      <strong>
+                        {checkResult.correct
+                          ? "Resposta correta!"
+                          : "Resposta incorreta. Revise o conteúdo."}
+                      </strong>
+                      <p>{checkResult.explanation}</p>
+                      <button
+                        className="primary-button"
+                        onClick={() => goToQuestion(questionIndex + 1)}
+                      >
+                        PRÓXIMA QUESTÃO →
+                      </button>
+                    </div>
                   ) : (
-                    <div className={`feedback ${answer === currentQuestion.correctAnswer ? "feedback-correct" : "feedback-wrong"}`}>
-                      <strong>{answer === currentQuestion.correctAnswer ? "Resposta correta!" : "Resposta incorreta. Revise o conteúdo."}</strong>
-                      <p>{currentQuestion.explanation}</p>
+                    <div className="premium-lock">
+                      <h3>Conteúdo premium</h3>
+                      <p>
+                        {checkError ||
+                          "Para ver o gabarito e a explicação, é necessário ter uma assinatura ativa."}
+                      </p>
+                      <p className="auth-links">
+                        {!user ? (
+                          <>
+                            <a href="/login">Entrar</a>
+                            {" · "}
+                            <a href="/cadastro">Criar conta</a>
+                            {" · "}
+                          </>
+                        ) : null}
+                        <a href="/assinatura">Ver assinatura</a>
+                      </p>
                       <button
                         className="primary-button"
                         onClick={() => goToQuestion(questionIndex + 1)}
@@ -846,7 +956,7 @@ export default function Home() {
                 <h2 className="simulado-review-title">Correção das questões</h2>
                 {questions.map((question, index) => {
                   const chosen = simAnswers[question.id];
-                  const correct = chosen === question.correctAnswer;
+                  const correct = Boolean(hasAccess && question.correctAnswer && chosen === question.correctAnswer);
                   return (
                     <article className="feature-card" key={question.id}>
                       <span className="question-tag">
@@ -861,7 +971,9 @@ export default function Home() {
                             ? `Errou — você marcou ${chosen.toUpperCase()}`
                             : "Não respondida"}
                       </p>
-                      <p>
+                      {hasAccess && question.correctAnswer ? (
+                      <>
+                        <p>
                         <strong>Gabarito:</strong>{" "}
                         {question.correctAnswer.toUpperCase()} —{" "}
                         {question.options.find(
@@ -869,6 +981,12 @@ export default function Home() {
                         )?.[1]}
                       </p>
                       <p>{question.explanation}</p>
+                      </>
+                    ) : (
+                      <div className="premium-lock">
+                        <p>Correção detalhada disponível com assinatura ativa.</p>
+                      </div>
+                    )}
                     </article>
                   );
                 })}
@@ -914,8 +1032,17 @@ export default function Home() {
                     <article className="feature-card" key={id}>
                       <span className="question-tag">{question.subject.toUpperCase()}</span>
                       <h2>{question.prompt}</h2>
-                      <p><strong>Gabarito:</strong> {question.options.find(([letter]) => letter === question.correctAnswer)?.[1]}</p>
-                      <p>{question.explanation}</p>
+                      {hasAccess && question.correctAnswer ? (
+                        <>
+                          <p><strong>Gabarito:</strong> {question.options.find(([letter]) => letter === question.correctAnswer)?.[1]}</p>
+                          <p>{question.explanation}</p>
+                        </>
+                      ) : (
+                        <div className="premium-lock">
+                          <p>Gabarito e explicação disponíveis com assinatura ativa.</p>
+                          <a href="/assinatura">Ver assinatura →</a>
+                        </div>
+                      )}
                       <button
                         className="secondary-button"
                         onClick={() => {
