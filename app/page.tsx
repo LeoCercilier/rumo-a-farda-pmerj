@@ -32,8 +32,6 @@ const localQuestions: AppQuestion[] = [
       ["c", "Existe muitas formas de aprender."],
       ["d", "Os aluno chegaram cedo."]
     ],
-    correctAnswer: "b",
-    explanation: "O verbo haver, com sentido de existir, é impessoal e fica na terceira pessoa do singular."
   },
   {
     id: "matematica-01",
@@ -45,8 +43,6 @@ const localQuestions: AppQuestion[] = [
       ["c", "90%"],
       ["d", "95%"]
     ],
-    correctAnswer: "c",
-    explanation: "18 dividido por 20 é igual a 0,9. Multiplicando por 100, obtemos 90%."
   },
   {
     id: "portugues-02",
@@ -58,8 +54,6 @@ const localQuestions: AppQuestion[] = [
       ["c", "Privilégio"],
       ["d", "Beneficiente"]
     ],
-    correctAnswer: "c",
-    explanation: "A grafia correta é privilégio. As demais formas apresentadas estão incorretas."
   },
   {
     id: "matematica-02",
@@ -71,8 +65,6 @@ const localQuestions: AppQuestion[] = [
       ["c", "25"],
       ["d", "30"]
     ],
-    correctAnswer: "d",
-    explanation: "10% de 200 é 20 e 5% é 10. Portanto, 15% corresponde a 30."
   }
 ];
 
