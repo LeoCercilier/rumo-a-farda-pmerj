@@ -79,6 +79,7 @@ export default function Home() {
   const [questions, setQuestions] = useState<AppQuestion[]>(localQuestions);
   const [bankLoading, setBankLoading] = useState(true);
   const [bankError, setBankError] = useState(false);
+  const [bankDebug, setBankDebug] = useState("Consulta ao banco em andamento...");
   const [displaySubjects, setDisplaySubjects] = useState(subjects);
   const [answer, setAnswer] = useState("");
   const [checked, setChecked] = useState(false);
@@ -153,6 +154,7 @@ export default function Home() {
         );
 
         setQuestions([...unique.values()]);
+        setBankDebug(`Consulta concluída: ${result.questions.length} questões recebidas; total disponível: ${unique.size}; erro: ${result.error ? "sim" : "não"}.`);
         setBankError(Boolean(result.error));
 
         if (result.error) {
@@ -166,6 +168,7 @@ export default function Home() {
         if (cancelled) return;
 
         setQuestions(localQuestions);
+        setBankDebug("Falha na consulta ao Supabase; questões locais preservadas.");
         setBankError(true);
         console.warn("Falha ao consultar o banco online.", error);
       })
@@ -497,6 +500,9 @@ export default function Home() {
             </div>
             {currentQuestion ? (
               <>
+                <p className="page-intro">
+                  Diagnóstico temporário: {bankLoading ? "Carregando..." : bankDebug}
+                </p>
                 <p className="page-intro">
                   Questão {questionIndex + 1} de {filteredQuestions.length}. Responda e confira a explicação.
                 </p>
