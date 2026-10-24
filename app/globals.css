@@ -192,3 +192,114 @@ button.subject-card{cursor:pointer}
     transition: none;
   }
 }
+
+/* Auth & subscription pages */
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: var(--paper);
+}
+.auth-card {
+  width: min(440px, 100%);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 28px 24px;
+  box-shadow: 0 12px 40px rgb(16 37 30 / 6%);
+}
+.auth-card h1 {
+  margin: 8px 0 12px;
+  font-family: Manrope, sans-serif;
+  font-size: 28px;
+  color: var(--forest);
+}
+.auth-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+}
+.auth-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--forest2);
+}
+.auth-form input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font: inherit;
+  background: #fbfbf8;
+}
+.auth-form input:focus {
+  outline: 2px solid rgb(155 137 90 / 35%);
+  border-color: var(--gold);
+}
+.auth-error {
+  color: #9b3b34;
+  background: #fff1ef;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin: 0;
+}
+.auth-success {
+  color: #1f5c3d;
+  background: #e8f5ee;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin: 0;
+}
+.auth-links {
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.auth-links a {
+  color: var(--forest2);
+  font-weight: 600;
+  text-decoration: none;
+}
+.auth-links a:hover {
+  text-decoration: underline;
+}
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--forest2);
+  font-weight: 600;
+  cursor: pointer;
+  font-size: inherit;
+}
+.premium-lock {
+  border: 1px solid var(--line);
+  background: #f3f5ef;
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 12px;
+}
+.premium-lock h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: var(--forest);
+}
+.auth-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.auth-bar a,
+.auth-bar button {
+  font-size: 12px;
+}
+.dark-eyebrow {
+  color: #91a397;
+}

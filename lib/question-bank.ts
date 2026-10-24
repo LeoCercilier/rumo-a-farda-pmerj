@@ -1,12 +1,14 @@
-import { supabase } from "./supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { supabase as browserSupabase } from "./supabase";
 
 export type AppQuestion = {
   id: string;
   subject: string;
   prompt: string;
   options: [string, string][];
-  correctAnswer: string;
-  explanation: string;
+  /** Presente apenas quando o backend autorizou (não confiar no cliente). */
+  correctAnswer?: string;
+  explanation?: string;
 };
 
 export type AppSubject = {
@@ -75,47 +77,60 @@ function normalizeOptions(value: unknown): [string, string][] {
   });
 }
 
-export async function loadQuestionBank(): Promise<QuestionBankResult> {
+async function loadSubjects(client: SupabaseClient) {
+  const subjectResponse = await client
+    .from("subjects")
+    .select("id, name, slug")
+    .order("name");
+
+  if (subjectResponse.error) {
+    return {
+      subjects: [] as AppSubject[],
+      subjectNames: new Map<string, string>(),
+      error: subjectResponse.error.message,
+    };
+  }
+
+  const subjectRows = (subjectResponse.data ?? []) as RawRecord[];
+
+  const subjects: AppSubject[] = subjectRows
+    .filter(
+      (row) => typeof row.name === "string" && typeof row.slug === "string"
+    )
+    .map((row) => ({
+      name: row.name as string,
+      slug: row.slug as string,
+    }));
+
+  const subjectNames = new Map<string, string>();
+  for (const row of subjectRows) {
+    if (typeof row.id === "string" && typeof row.name === "string") {
+      subjectNames.set(row.id, row.name);
+    }
+  }
+
+  return { subjects, subjectNames, error: null as string | null };
+}
+
+/**
+ * Carrega questões SEM gabarito e SEM explicação.
+ * Usado para usuários sem assinatura ativa e para o payload inicial do cliente.
+ */
+export async function loadQuestionBankPublic(
+  client: SupabaseClient
+): Promise<QuestionBankResult> {
   try {
-    const subjectResponse = await supabase
-      .from("subjects")
-      .select("id, name, slug")
-      .order("name");
+    const { subjects, subjectNames, error: subjectError } =
+      await loadSubjects(client);
 
-    if (subjectResponse.error) {
-      return {
-        subjects: [],
-        questions: [],
-        error: subjectResponse.error.message,
-      };
+    if (subjectError) {
+      return { subjects: [], questions: [], error: subjectError };
     }
 
-    const subjectRows = (subjectResponse.data ?? []) as RawRecord[];
-
-    const subjects: AppSubject[] = subjectRows
-      .filter(
-        (row) =>
-          typeof row.name === "string" &&
-          typeof row.slug === "string"
-      )
-      .map((row) => ({
-        name: row.name as string,
-        slug: row.slug as string,
-      }));
-
-    const subjectNames = new Map<string, string>();
-
-    for (const row of subjectRows) {
-      if (typeof row.id === "string" && typeof row.name === "string") {
-        subjectNames.set(row.id, row.name);
-      }
-    }
-
-    const questionResponse = await supabase
+    // Select explícito SEM correct_option e SEM explanation.
+    const questionResponse = await client
       .from("questions")
-      .select(
-        "id, subject_id, statement, options, correct_option, explanation, difficulty"
-      )
+      .select("id, subject_id, statement, options, difficulty")
       .eq("active", true);
 
     if (questionResponse.error) {
@@ -127,30 +142,21 @@ export async function loadQuestionBank(): Promise<QuestionBankResult> {
     }
 
     const questionRows = (questionResponse.data ?? []) as RawRecord[];
-
     const questions: AppQuestion[] = [];
 
     for (const row of questionRows) {
       if (
         typeof row.id !== "string" ||
         typeof row.subject_id !== "string" ||
-        typeof row.statement !== "string" ||
-        typeof row.correct_option !== "string" ||
-        typeof row.explanation !== "string"
+        typeof row.statement !== "string"
       ) {
         continue;
       }
 
       const subject = subjectNames.get(row.subject_id);
       const options = normalizeOptions(row.options);
-      const correctAnswer = row.correct_option.trim().toLowerCase();
 
-      if (
-        !subject ||
-        !row.statement.trim() ||
-        options.length < 2 ||
-        !options.some(([letter]) => letter === correctAnswer)
-      ) {
+      if (!subject || !row.statement.trim() || options.length < 2) {
         continue;
       }
 
@@ -159,16 +165,10 @@ export async function loadQuestionBank(): Promise<QuestionBankResult> {
         subject,
         prompt: row.statement.trim(),
         options,
-        correctAnswer,
-        explanation: row.explanation.trim(),
       });
     }
 
-    return {
-      subjects,
-      questions,
-      error: null,
-    };
+    return { subjects, questions, error: null };
   } catch (error) {
     return {
       subjects: [],
@@ -179,4 +179,29 @@ export async function loadQuestionBank(): Promise<QuestionBankResult> {
           : "Não foi possível consultar o banco de questões.",
     };
   }
+}
+
+/**
+ * Carrega questões com metadados; gabarito ainda não é necessário no cliente
+ * porque a correção passa por /api/questions/check.
+ * Mantido para eventual uso server-side.
+ */
+export async function loadQuestionBankPremium(
+  client: SupabaseClient
+): Promise<QuestionBankResult> {
+  // Por segurança, o payload ao cliente continua sem gabarito em massa.
+  // A correção é feita questão a questão no endpoint /api/questions/check.
+  return loadQuestionBankPublic(client);
+}
+
+/**
+ * Compatibilidade com o código legado (client-side).
+ * Prefira /api/questions/bank no cliente autenticado.
+ *
+ * ATENÇÃO: esta função ainda pode receber correct_option se o RLS
+ * do Supabase permitir. O frontend deve preferir a API de servidor.
+ * Após o ajuste de RLS, o select abaixo deve ser alinhado ao público.
+ */
+export async function loadQuestionBank(): Promise<QuestionBankResult> {
+  return loadQuestionBankPublic(browserSupabase);
 }
