@@ -142,7 +142,7 @@ export async function POST(request: Request) {
 
     if (
       !dataId ||
-      !/^\d+$/.test(dataId) ||
+      !/^[A-Za-z0-9_-]+$/.test(dataId) ||
       !verifySignature(signature, requestId, dataId, secret)
     ) {
       return NextResponse.json(
@@ -210,7 +210,10 @@ export async function POST(request: Request) {
       preapprovalId = dataId;
     }
 
-    if (!preapprovalId || !/^\d+$/.test(preapprovalId)) {
+    if (
+      !preapprovalId ||
+      !/^[A-Za-z0-9_-]+$/.test(preapprovalId)
+    ) {
       return NextResponse.json(
         { error: "invalid_preapproval_id" },
         { status: 400 }
