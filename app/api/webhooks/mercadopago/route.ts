@@ -49,10 +49,7 @@ type EventRecord = {
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 const STALE_EVENT_MINUTES = 5;
 
-function response(
-  error: string,
-  status: number
-) {
+function response(error: string, status: number) {
   return NextResponse.json({ error }, { status });
 }
 
@@ -155,8 +152,6 @@ function makeEventKey(
   body: WebhookBody,
   dataId: string
 ): string {
-  // Identidade estável: não usar request-id, pois ele pode
-  // mudar entre reenvios da mesma notificação.
   const identity = JSON.stringify({
     notificationId:
       body.id !== undefined ? String(body.id) : null,
@@ -229,8 +224,6 @@ export async function POST(request: Request) {
       now.getTime() - STALE_EVENT_MINUTES * 60 * 1000
     ).toISOString();
 
-    // Registra primeiro o evento. Se a migração ainda não foi
-    // aplicada, esta operação falha e o webhook responde 503.
     const { data: inserted, error: insertError } = await admin
       .from("subscription_webhook_events")
       .insert({
@@ -276,8 +269,6 @@ export async function POST(request: Request) {
         });
       }
 
-      // Um evento em processamento recente pode estar sendo
-      // executado por outra requisição. Não processá-lo em paralelo.
       if (
         previous.status === "processing" &&
         Date.parse(previous.updated_at) > Date.parse(staleBefore)
@@ -289,9 +280,6 @@ export async function POST(request: Request) {
         });
       }
 
-      // Reivindica novamente eventos que falharam ou ficaram
-      // presos em processamento. A condição impede que duas
-      // requisições reivindiquem simultaneamente o mesmo estado.
       let claimQuery = admin
         .from("subscription_webhook_events")
         .update({
@@ -329,20 +317,25 @@ export async function POST(request: Request) {
 
     eventId = event.id;
 
-    async function markProcessed() {
-      const { error } = await admin!
+    async function markProcessed(): Promise<boolean> {
+      const processedAt = new Date().toISOString();
+
+      const { data, error } = await admin!
         .from("subscription_webhook_events")
         .update({
           status: "processed",
-          processed_at: new Date().toISOString(),
+          processed_at: processedAt,
           last_error_code: null,
-          updated_at: new Date().toISOString(),
+          updated_at: processedAt,
         })
-        .eq("id", eventId!);
+        .eq("id", eventId!)
+        .eq("status", "processing")
+        .select("id")
+        .maybeSingle();
 
-      if (error) {
+      if (error || !data) {
         console.error(
-          "[webhook] Falha ao concluir o registro do evento."
+          "[webhook] Falha ao confirmar a finalização do evento."
         );
         return false;
       }
@@ -394,8 +387,6 @@ export async function POST(request: Request) {
       return await finishIgnored("invalid_preapproval_id");
     }
 
-    // A situação é consultada diretamente no Mercado Pago;
-    // o conteúdo recebido no webhook não é fonte de verdade.
     const resource =
       await getMercadoPagoResource<MercadoPagoSubscription>(
         `/preapproval/${encodeURIComponent(preapprovalId)}`,
@@ -422,7 +413,7 @@ export async function POST(request: Request) {
     const { data: existing, error: existingError } = await admin
       .from("subscriptions")
       .select(
-        "status, current_period_end, mp_preapproval_id, current_period_start"
+        "status, current_period_end, mp_preapproval_id, current_period_start, cancelled_at"
       )
       .eq("user_id", userId)
       .maybeSingle();
@@ -456,6 +447,19 @@ export async function POST(request: Request) {
       Number.isFinite(nextPaymentMs) &&
       nextPaymentMs > currentTime;
 
+    // Uma notificação de assinatura não comprova, por si só,
+    // que houve pagamento. A confirmação vem da fatura consultada.
+    const confirmedPayment =
+      isInvoiceEvent &&
+      paymentApproved &&
+      nextPaymentIsFuture;
+
+    const resourceCancelled =
+      resourceStatus === "cancelled" ||
+      resourceStatus === "canceled";
+
+    const existingCancelled = existing?.status === "cancelled";
+
     let status:
       | "active"
       | "pending"
@@ -466,43 +470,40 @@ export async function POST(request: Request) {
 
     let periodEnd: string | null = null;
     let cancelledAt: string | null = null;
+    let periodStart: string | null =
+      existing?.current_period_start ?? null;
 
-    if (
-      resourceStatus === "cancelled" ||
-      resourceStatus === "canceled"
-    ) {
-      // Cancelar a renovação não deve apagar o período que já
-      // estava confirmado. Sem data válida, não haverá acesso.
+    if (resourceCancelled || existingCancelled) {
+      // Eventos atrasados não reativam assinaturas canceladas.
+      // A validade já registrada é preservada sem prorrogação
+      // baseada apenas na data da próxima cobrança.
       status = "cancelled";
-      periodEnd = oldEndIsFuture
+      periodEnd = existing?.current_period_end ?? null;
+      cancelledAt = existing?.cancelled_at ?? nowIso;
+    } else if (confirmedPayment) {
+      // Não encurtar uma vigência futura já registrada.
+      const preservedEndMs = oldEndIsFuture
+        ? Math.max(oldEndMs, nextPaymentMs)
+        : nextPaymentMs;
+
+      status = "active";
+      periodEnd = new Date(preservedEndMs).toISOString();
+
+      periodStart = oldEndIsFuture
         ? new Date(oldEndMs).toISOString()
-        : existing?.current_period_end ?? null;
-      cancelledAt = nowIso;
+        : nowIso;
     } else if (
-      // Não reativar uma assinatura cancelada apenas por causa
-      // de uma notificação atrasada ou fora de ordem.
-      existing?.status === "cancelled"
+      existing?.status === "active" &&
+      oldEndIsFuture
     ) {
-      status = "cancelled";
-      periodEnd = existing.current_period_end ?? null;
-      cancelledAt = nowIso;
+      // Pausa, rejeição ou notificação atrasada não apagam
+      // um período pago que continua vigente.
+      status = "active";
+      periodEnd = new Date(oldEndMs).toISOString();
     } else {
       switch (resourceStatus) {
         case "authorized":
-          if (paymentApproved && nextPaymentIsFuture) {
-            status = "active";
-            periodEnd = new Date(nextPaymentMs).toISOString();
-          } else if (
-            existing?.status === "active" &&
-            oldEndIsFuture
-          ) {
-            // Notificações de assinatura sem confirmação de uma
-            // nova cobrança não apagam o período já validado.
-            status = "active";
-            periodEnd = new Date(oldEndMs).toISOString();
-          } else {
-            status = "pending";
-          }
+          status = "pending";
           break;
 
         case "paused":
@@ -530,8 +531,7 @@ export async function POST(request: Request) {
           status,
           mp_preapproval_id: preapprovalId,
           plan_id: resource.preapproval_plan_id,
-          current_period_start:
-            existing?.current_period_start ?? null,
+          current_period_start: periodStart,
           current_period_end: periodEnd,
           cancelled_at: cancelledAt,
           raw_payload: {
@@ -551,8 +551,6 @@ export async function POST(request: Request) {
     }
 
     if (!(await markProcessed())) {
-      // O registro da assinatura pode ter sido salvo, mas o evento
-      // continua recuperável se a finalização falhar.
       return response("event_finalization_failed", 503);
     }
 
