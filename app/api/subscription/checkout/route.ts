@@ -95,7 +95,16 @@ async function savePendingSubscription(
     return false;
   }
 
-  if (existing?.status === "active") {
+  // Só é seguro gravar "pending" se não existir assinatura
+  // ou se o registro já estiver pendente para este mesmo checkout.
+  // Não sobrescrever estados confirmados ou que exigem reconciliação.
+  if (
+    existing?.status &&
+    existing.status !== "pending"
+  ) {
+    console.warn(
+      "[checkout] Estado existente impede sobrescrever assinatura."
+    );
     return false;
   }
 
@@ -128,7 +137,7 @@ async function savePendingSubscription(
 
 export async function POST() {
   try {
-    // A cobrança continua bloqueada até autorização explícita.
+    // Cobranças permanecem bloqueadas até autorização explícita.
     if (process.env.BILLING_ENABLED !== "true") {
       return errorResponse(
         "billing_disabled",
@@ -207,8 +216,7 @@ export async function POST() {
       );
     }
 
-    // Primeiro reservamos uma tentativa persistente.
-    // A mesma chave e referência serão reutilizadas em uma repetição segura.
+    // Uma tentativa por usuário. Não gerar novas chaves às cegas.
     let attempt: CheckoutAttempt | null = null;
 
     const { data: inserted, error: insertError } = await admin
@@ -230,8 +238,6 @@ export async function POST() {
     if (!insertError && inserted) {
       attempt = inserted as CheckoutAttempt;
     } else {
-      // Uma tentativa já pode ter sido criada por uma requisição concorrente.
-      // Nunca substituímos a chave existente automaticamente.
       const { data: existingAttempt, error: attemptReadError } =
         await admin
           .from("subscription_checkout_attempts")
@@ -287,8 +293,8 @@ export async function POST() {
       if (!saved) {
         return errorResponse(
           "subscription_persistence_failed",
-          "Não foi possível confirmar o registro da assinatura. Não inicie outra tentativa.",
-          503
+          "O estado da assinatura impede recuperar esse checkout. É necessária uma reconciliação antes de continuar.",
+          409
         );
       }
 
@@ -297,8 +303,6 @@ export async function POST() {
       });
     }
 
-    // Se a reserva expirou, não criamos outra assinatura às cegas.
-    // O resultado anterior deve ser reconciliado primeiro.
     if (Date.parse(attempt.lease_expires_at) <= Date.now()) {
       return errorResponse(
         "checkout_reconciliation_required",
@@ -328,8 +332,6 @@ export async function POST() {
     );
 
     if (!mpResponse.ok) {
-      // Mantemos a tentativa reservada: uma resposta de erro pode não
-      // provar que o Mercado Pago deixou de criar o recurso.
       console.error(
         "[checkout] Resposta não conclusiva do Mercado Pago.",
         { httpStatus: mpResponse.status }
@@ -413,15 +415,13 @@ export async function POST() {
     if (!saved) {
       return errorResponse(
         "subscription_persistence_failed",
-        "O checkout foi registrado, mas a assinatura ainda precisa ser reconciliada. Não inicie outra tentativa.",
+        "O checkout foi registrado, mas a assinatura precisa ser reconciliada. Não inicie outra tentativa.",
         503
       );
     }
 
     return NextResponse.json({ checkoutUrl });
   } catch {
-    // Não apagamos nem recriamos uma reserva quando há timeout ou erro
-    // de rede: o resultado no Mercado Pago pode ser desconhecido.
     console.error(
       "[subscription/checkout] Erro interno ao iniciar checkout."
     );
