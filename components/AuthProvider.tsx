@@ -33,6 +33,7 @@ const defaultSubscription: SubscriptionInfo = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+
 function isSubscriptionInfo(value: unknown): value is SubscriptionInfo {
   if (!value || typeof value !== "object") {
     return false;
@@ -40,21 +41,54 @@ function isSubscriptionInfo(value: unknown): value is SubscriptionInfo {
 
   const data = value as Partial<SubscriptionInfo>;
 
-  return (
-    typeof data.authenticated === "boolean" &&
-    typeof data.hasAccess === "boolean" &&
-    typeof data.status === "string" &&
-    typeof data.currentPeriodEnd === "string" ||
-    (
-      !!value &&
-      typeof value === "object" &&
-      typeof (value as Partial<SubscriptionInfo>).authenticated === "boolean" &&
-      typeof (value as Partial<SubscriptionInfo>).hasAccess === "boolean" &&
-      typeof (value as Partial<SubscriptionInfo>).status === "string" &&
-      (value as Partial<SubscriptionInfo>).currentPeriodEnd === null
+  const validStatuses: readonly SubscriptionInfo["status"][] = [
+    "none",
+    "pending",
+    "active",
+    "past_due",
+    "cancelled",
+    "expired",
+    "rejected",
+  ];
+
+  if (
+    typeof data.authenticated !== "boolean" ||
+    typeof data.hasAccess !== "boolean" ||
+    typeof data.status !== "string" ||
+    !validStatuses.includes(
+      data.status as SubscriptionInfo["status"]
+    ) ||
+    !(
+      data.currentPeriodEnd === null ||
+      (
+        typeof data.currentPeriodEnd === "string" &&
+        Number.isFinite(Date.parse(data.currentPeriodEnd))
+      )
+    ) ||
+    !(
+      data.planId === null ||
+      typeof data.planId === "string"
     )
-  );
+  ) {
+    return false;
+  }
+
+  // O cliente não deve aceitar estados Premium contraditórios.
+  if (
+    data.hasAccess &&
+    (
+      data.authenticated !== true ||
+      data.status !== "active" ||
+      data.currentPeriodEnd === null ||
+      Date.parse(data.currentPeriodEnd) <= Date.now()
+    )
+  ) {
+    return false;
+  }
+
+  return true;
 }
+
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
