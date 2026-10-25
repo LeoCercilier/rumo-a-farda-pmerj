@@ -22,6 +22,8 @@ type MercadoPagoSubscription = {
   last_modified?: string;
 };
 
+const SIGNATURE_TOLERANCE_SECONDS = 300;
+
 function verifySignature(
   signature: string | null,
   requestId: string | null,
@@ -32,18 +34,18 @@ function verifySignature(
     return false;
   }
 
-  const parts = Object.fromEntries(
-    signature.split(",").map((part) => {
-      const separator = part.indexOf("=");
+  const parts: Record<string, string> = {};
 
-      return separator === -1
-        ? [part.trim(), ""]
-        : [
-            part.slice(0, separator).trim(),
-            part.slice(separator + 1).trim(),
-          ];
-    })
-  );
+  for (const part of signature.split(",")) {
+    const separator = part.indexOf("=");
+
+    if (separator === -1) continue;
+
+    const key = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+
+    parts[key] = value;
+  }
 
   const timestamp = parts.ts;
   const receivedHash = parts.v1;
@@ -53,6 +55,17 @@ function verifySignature(
     !receivedHash ||
     !/^\d+$/.test(timestamp) ||
     !/^[a-f0-9]{64}$/i.test(receivedHash)
+  ) {
+    return false;
+  }
+
+  const timestampSeconds = Number(timestamp);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  if (
+    !Number.isSafeInteger(timestampSeconds) ||
+    Math.abs(nowSeconds - timestampSeconds) >
+      SIGNATURE_TOLERANCE_SECONDS
   ) {
     return false;
   }
@@ -74,7 +87,13 @@ function verifySignature(
 
 function mapStatus(
   status: string | undefined
-): "active" | "pending" | "cancelled" | "past_due" | "rejected" | "expired" {
+):
+  | "active"
+  | "pending"
+  | "cancelled"
+  | "past_due"
+  | "rejected"
+  | "expired" {
   switch ((status || "").toLowerCase()) {
     case "authorized":
       return "active";
@@ -99,7 +118,6 @@ export async function POST(request: Request) {
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
     const expectedPlanId = process.env.MERCADOPAGO_PLAN_ID;
 
-    // Sem segredo configurado, o webhook não pode liberar acesso.
     if (!secret || !accessToken || !expectedPlanId) {
       console.error(
         "[webhook] Configuração do Mercado Pago incompleta."
@@ -116,7 +134,11 @@ export async function POST(request: Request) {
     const requestId = request.headers.get("x-request-id");
     const signature = request.headers.get("x-signature");
 
-    if (!verifySignature(signature, requestId, dataId, secret)) {
+    if (
+      !dataId ||
+      !/^\d+$/.test(dataId) ||
+      !verifySignature(signature, requestId, dataId, secret)
+    ) {
       return NextResponse.json(
         { error: "invalid_signature" },
         { status: 401 }
@@ -124,10 +146,21 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as WebhookBody;
+    const bodyId = body.data?.id;
+
+    if (
+      bodyId !== undefined &&
+      String(bodyId) !== dataId
+    ) {
+      return NextResponse.json(
+        { error: "resource_id_mismatch" },
+        { status: 400 }
+      );
+    }
 
     const isSubscriptionEvent =
       body.type === "subscription_preapproval" ||
-      body.action?.includes("subscription_preapproval");
+      body.action?.includes("subscription_preapproval") === true;
 
     if (!isSubscriptionEvent) {
       return NextResponse.json({
@@ -136,15 +169,6 @@ export async function POST(request: Request) {
       });
     }
 
-    if (!dataId || !/^\d+$/.test(dataId)) {
-      return NextResponse.json(
-        { error: "invalid_resource_id" },
-        { status: 400 }
-      );
-    }
-
-    // A assinatura digital é validada antes de consultar o recurso.
-    // O status usado abaixo vem da API do Mercado Pago, não do navegador.
     const mpResponse = await fetch(
       `https://api.mercadopago.com/preapproval/${encodeURIComponent(dataId)}`,
       {
@@ -177,10 +201,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // Não aceitar assinatura vinculada a outro plano.
     if (resource.preapproval_plan_id !== expectedPlanId) {
       console.warn(
-        "[webhook] Plano da assinatura não corresponde ao plano configurado."
+        "[webhook] Plano diferente do plano configurado."
       );
 
       return NextResponse.json({
@@ -189,7 +212,6 @@ export async function POST(request: Request) {
       });
     }
 
-    // A referência foi criada no checkout para identificar a conta.
     const userMatch = resource.external_reference?.match(
       /^user:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     );
@@ -197,9 +219,7 @@ export async function POST(request: Request) {
     const userId = userMatch?.[1];
 
     if (!userId) {
-      console.warn(
-        "[webhook] Referência externa inválida."
-      );
+      console.warn("[webhook] Referência externa inválida.");
 
       return NextResponse.json({
         received: true,
@@ -216,12 +236,11 @@ export async function POST(request: Request) {
         ? Date.parse(nextPaymentDate)
         : Number.NaN;
 
-      // Não inventar vencimento: sem data válida e futura,
-      // a assinatura permanece sem acesso Premium.
       if (
         Number.isNaN(parsedDate) ||
         parsedDate <= Date.now()
       ) {
+        // Sem validade confiável, não liberar o Premium.
         status = "pending";
       } else {
         periodEnd = new Date(parsedDate).toISOString();
@@ -253,7 +272,6 @@ export async function POST(request: Request) {
         "[webhook] Falha ao salvar assinatura no Supabase."
       );
 
-      // Retornar erro permite que a notificação seja reenviada.
       return NextResponse.json(
         { error: "subscription_persistence_failed" },
         { status: 500 }
