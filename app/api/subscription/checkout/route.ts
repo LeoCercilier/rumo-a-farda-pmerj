@@ -19,6 +19,16 @@ type CheckoutAttempt = {
   lease_expires_at: string;
 };
 
+type ExistingSubscription = {
+  status: string;
+  mp_preapproval_id: string | null;
+  current_period_end: string | null;
+};
+
+function errorResponse(error: string, message: string, status: number) {
+  return NextResponse.json({ error, message }, { status });
+}
+
 function getAppUrl(): string | null {
   const value = process.env.NEXT_PUBLIC_APP_URL;
   if (!value) return null;
@@ -63,12 +73,18 @@ function isMercadoPagoCheckoutUrl(value: string): boolean {
   }
 }
 
-function errorResponse(
-  error: string,
-  message: string,
-  status: number
-) {
-  return NextResponse.json({ error, message }, { status });
+function hasPaidPeriod(subscription: ExistingSubscription): boolean {
+  if (
+    subscription.status !== "active" &&
+    subscription.status !== "cancelled"
+  ) {
+    return false;
+  }
+
+  if (!subscription.current_period_end) return false;
+
+  const end = Date.parse(subscription.current_period_end);
+  return Number.isFinite(end) && end > Date.now();
 }
 
 async function savePendingSubscription(
@@ -79,33 +95,34 @@ async function savePendingSubscription(
 ): Promise<boolean> {
   const { data: existing, error: readError } = await admin
     .from("subscriptions")
-    .select("status, mp_preapproval_id")
+    .select("status, mp_preapproval_id, current_period_end")
     .eq("user_id", userId)
     .maybeSingle();
 
   if (readError) return false;
 
-  if (
-    existing?.mp_preapproval_id &&
-    existing.mp_preapproval_id !== preapprovalId
-  ) {
-    console.error(
-      "[checkout] Identificador de assinatura divergente."
-    );
-    return false;
-  }
+  if (existing) {
+    const current = existing as ExistingSubscription;
 
-  // Só é seguro gravar "pending" se não existir assinatura
-  // ou se o registro já estiver pendente para este mesmo checkout.
-  // Não sobrescrever estados confirmados ou que exigem reconciliação.
-  if (
-    existing?.status &&
-    existing.status !== "pending"
-  ) {
-    console.warn(
-      "[checkout] Estado existente impede sobrescrever assinatura."
-    );
-    return false;
+    // Nunca substituir uma assinatura com outro identificador.
+    if (
+      current.mp_preapproval_id &&
+      current.mp_preapproval_id !== preapprovalId
+    ) {
+      console.error("[checkout] Identificador de assinatura divergente.");
+      return false;
+    }
+
+    // Não sobrescrever uma assinatura com período pago vigente.
+    if (hasPaidPeriod(current)) {
+      return false;
+    }
+
+    // Só reutilizar uma linha existente se ela estiver pendente.
+    // Estados terminais exigem reconciliação antes de substituição.
+    if (current.status !== "pending") {
+      return false;
+    }
   }
 
   const { error } = await admin
@@ -126,18 +143,38 @@ async function savePendingSubscription(
     );
 
   if (error) {
-    console.error(
-      "[checkout] Falha ao persistir assinatura pendente."
-    );
+    console.error("[checkout] Falha ao persistir assinatura pendente.");
     return false;
   }
 
   return true;
 }
 
+async function readAttempt(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string
+): Promise<{ attempt: CheckoutAttempt | null; failed: boolean }> {
+  const { data, error } = await admin
+    .from("subscription_checkout_attempts")
+    .select(
+      "id, user_id, idempotency_key, external_reference, status, mp_preapproval_id, checkout_url, lease_expires_at"
+    )
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    return { attempt: null, failed: true };
+  }
+
+  return {
+    attempt: data as CheckoutAttempt | null,
+    failed: false,
+  };
+}
+
 export async function POST() {
   try {
-    // Cobranças permanecem bloqueadas até autorização explícita.
+    // Não habilitar cobranças sem autorização expressa.
     if (process.env.BILLING_ENABLED !== "true") {
       return errorResponse(
         "billing_disabled",
@@ -165,11 +202,7 @@ export async function POST() {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return errorResponse(
-        "unauthenticated",
-        "Faça login para assinar.",
-        401
-      );
+      return errorResponse("unauthenticated", "Faça login para assinar.", 401);
     }
 
     if (!user.email) {
@@ -182,12 +215,11 @@ export async function POST() {
 
     const admin = createAdminClient();
 
-    const { data: subscription, error: subscriptionError } =
-      await admin
-        .from("subscriptions")
-        .select("status, mp_preapproval_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
+    const { data: subscriptionData, error: subscriptionError } = await admin
+      .from("subscriptions")
+      .select("status, mp_preapproval_id, current_period_end")
+      .eq("user_id", user.id)
+      .maybeSingle();
 
     if (subscriptionError) {
       return errorResponse(
@@ -197,75 +229,85 @@ export async function POST() {
       );
     }
 
-    if (subscription?.status === "active") {
+    const subscription = subscriptionData as ExistingSubscription | null;
+
+    if (subscription && hasPaidPeriod(subscription)) {
       return errorResponse(
-        "subscription_already_active",
-        "Sua conta já possui uma assinatura ativa.",
+        "subscription_period_still_valid",
+        "Sua conta já possui um período pago vigente. Não é necessário iniciar outra assinatura.",
         409
       );
     }
 
-    if (
-      subscription?.status === "pending" &&
-      subscription.mp_preapproval_id
-    ) {
+    let attempt: CheckoutAttempt;
+    let ownsNewAttempt = false;
+
+    // Procurar uma tentativa existente antes de criar outra.
+    const read = await readAttempt(admin, user.id);
+
+    if (read.failed) {
       return errorResponse(
-        "subscription_pending",
-        "Já existe uma assinatura em processamento. Consulte seu status antes de iniciar outra.",
-        409
+        "checkout_attempt_unavailable",
+        "Não foi possível verificar a tentativa anterior.",
+        503
       );
     }
 
-    // Uma tentativa por usuário. Não gerar novas chaves às cegas.
-    let attempt: CheckoutAttempt | null = null;
-
-    const { data: inserted, error: insertError } = await admin
-      .from("subscription_checkout_attempts")
-      .insert({
-        user_id: user.id,
-        idempotency_key: randomUUID(),
-        external_reference: `user:${user.id}:${randomUUID()}`,
-        status: "creating",
-        lease_expires_at: new Date(
-          Date.now() + CHECKOUT_LEASE_MINUTES * 60 * 1000
-        ).toISOString(),
-      })
-      .select(
-        "id, user_id, idempotency_key, external_reference, status, mp_preapproval_id, checkout_url, lease_expires_at"
-      )
-      .single();
-
-    if (!insertError && inserted) {
-      attempt = inserted as CheckoutAttempt;
+    if (read.attempt) {
+      attempt = read.attempt;
     } else {
-      const { data: existingAttempt, error: attemptReadError } =
-        await admin
-          .from("subscription_checkout_attempts")
-          .select(
-            "id, user_id, idempotency_key, external_reference, status, mp_preapproval_id, checkout_url, lease_expires_at"
-          )
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-      if (attemptReadError || !existingAttempt) {
-        console.error(
-          "[checkout] Não foi possível reservar ou recuperar a tentativa."
-        );
-
+      // Não iniciar um novo identificador de cobrança quando já
+      // existe uma assinatura antiga que ainda exige reconciliação.
+      if (subscription?.mp_preapproval_id) {
         return errorResponse(
-          "checkout_attempt_unavailable",
-          "Não foi possível preparar o checkout. Tente novamente mais tarde.",
-          503
+          "subscription_reconciliation_required",
+          "A assinatura anterior precisa ser reconciliada antes de iniciar outra cobrança.",
+          409
         );
       }
 
-      attempt = existingAttempt as CheckoutAttempt;
+      const now = new Date();
+      const leaseExpiresAt = new Date(
+        now.getTime() + CHECKOUT_LEASE_MINUTES * 60 * 1000
+      ).toISOString();
+
+      const { data: inserted, error: insertError } = await admin
+        .from("subscription_checkout_attempts")
+        .insert({
+          user_id: user.id,
+          idempotency_key: randomUUID(),
+          external_reference: `user:${user.id}:${randomUUID()}`,
+          status: "creating",
+          lease_expires_at: leaseExpiresAt,
+        })
+        .select(
+          "id, user_id, idempotency_key, external_reference, status, mp_preapproval_id, checkout_url, lease_expires_at"
+        )
+        .maybeSingle();
+
+      if (insertError || !inserted) {
+        // Outra requisição pode ter reservado a tentativa no intervalo.
+        const reread = await readAttempt(admin, user.id);
+
+        if (reread.failed || !reread.attempt) {
+          return errorResponse(
+            "checkout_attempt_unavailable",
+            "Não foi possível reservar a tentativa de checkout.",
+            503
+          );
+        }
+
+        attempt = reread.attempt;
+      } else {
+        attempt = inserted as CheckoutAttempt;
+        ownsNewAttempt = true;
+      }
     }
 
     if (attempt.status === "failed") {
       return errorResponse(
         "checkout_attempt_requires_review",
-        "A tentativa anterior precisa ser verificada antes de iniciar outra assinatura.",
+        "A tentativa anterior precisa ser reconciliada antes de iniciar outra cobrança.",
         409
       );
     }
@@ -293,20 +335,65 @@ export async function POST() {
       if (!saved) {
         return errorResponse(
           "subscription_persistence_failed",
-          "O estado da assinatura impede recuperar esse checkout. É necessária uma reconciliação antes de continuar.",
+          "Não foi possível reconciliar o checkout com a assinatura existente.",
           409
         );
       }
 
-      return NextResponse.json({
-        checkoutUrl: attempt.checkout_url,
-      });
+      return NextResponse.json({ checkoutUrl: attempt.checkout_url });
     }
 
-    if (Date.parse(attempt.lease_expires_at) <= Date.now()) {
+    // Uma tentativa creating que não foi criada nesta requisição
+    // só pode ser retomada após expirar sua reserva.
+    if (!ownsNewAttempt) {
+      if (Date.parse(attempt.lease_expires_at) > Date.now()) {
+        return errorResponse(
+          "checkout_in_progress",
+          "Já existe uma tentativa em andamento. Aguarde antes de tentar novamente.",
+          409
+        );
+      }
+
+      const newLeaseExpiresAt = new Date(
+        Date.now() + CHECKOUT_LEASE_MINUTES * 60 * 1000
+      ).toISOString();
+
+      // Atualização condicional: apenas uma requisição pode reivindicar
+      // uma reserva expirada. A chave de idempotência original é mantida.
+      const { data: claimed, error: claimError } = await admin
+        .from("subscription_checkout_attempts")
+        .update({
+          lease_expires_at: newLeaseExpiresAt,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", attempt.id)
+        .eq("status", "creating")
+        .lte("lease_expires_at", new Date().toISOString())
+        .select(
+          "id, user_id, idempotency_key, external_reference, status, mp_preapproval_id, checkout_url, lease_expires_at"
+        )
+        .maybeSingle();
+
+      if (claimError || !claimed) {
+        return errorResponse(
+          "checkout_reconciliation_required",
+          "Outra requisição pode estar recuperando essa tentativa. Verifique o status antes de continuar.",
+          409
+        );
+      }
+
+      attempt = claimed as CheckoutAttempt;
+    }
+
+    // Se já há um identificador na assinatura, ele precisa coincidir
+    // com a tentativa que está sendo retomada.
+    if (
+      subscription?.mp_preapproval_id &&
+      subscription.mp_preapproval_id !== attempt.mp_preapproval_id
+    ) {
       return errorResponse(
-        "checkout_reconciliation_required",
-        "O resultado da tentativa anterior precisa ser verificado antes de continuar. Não tente criar outra assinatura.",
+        "subscription_reconciliation_required",
+        "A assinatura anterior precisa ser reconciliada antes de continuar.",
         409
       );
     }
@@ -332,14 +419,15 @@ export async function POST() {
     );
 
     if (!mpResponse.ok) {
-      console.error(
-        "[checkout] Resposta não conclusiva do Mercado Pago.",
-        { httpStatus: mpResponse.status }
-      );
+      // Não gerar outra chave automaticamente. Após expirar a reserva,
+      // uma recuperação poderá reutilizar a mesma chave e referência.
+      console.error("[checkout] Resultado não confirmado pelo Mercado Pago.", {
+        httpStatus: mpResponse.status,
+      });
 
       return errorResponse(
         "mercadopago_result_uncertain",
-        "Não foi possível confirmar o resultado do checkout. Não inicie outra assinatura; a tentativa precisa ser verificada.",
+        "Não foi possível confirmar o resultado. Aguarde a liberação da tentativa e não inicie outra cobrança.",
         502
       );
     }
@@ -363,26 +451,26 @@ export async function POST() {
       !checkoutUrl ||
       !isMercadoPagoCheckoutUrl(checkoutUrl) ||
       (
-        mpData.external_reference &&
+        mpData.external_reference !== undefined &&
         mpData.external_reference !== attempt.external_reference
       ) ||
       (
-        mpData.preapproval_plan_id &&
+        mpData.preapproval_plan_id !== undefined &&
         mpData.preapproval_plan_id !== planId
       )
     ) {
-      console.error(
-        "[checkout] Resposta do Mercado Pago inválida ou inconsistente."
-      );
+      console.error("[checkout] Resposta inválida ou inconsistente.");
 
       return errorResponse(
         "invalid_checkout_response",
-        "Não foi possível validar a resposta do checkout. Não inicie outra assinatura.",
+        "A resposta do checkout não pôde ser validada. A tentativa precisa ser reconciliada.",
         502
       );
     }
 
-    const { error: attemptSaveError } = await admin
+    // Só declarar a tentativa pendente se a atualização condicional
+    // tiver realmente encontrado e atualizado a reserva.
+    const { data: attemptSaved, error: attemptSaveError } = await admin
       .from("subscription_checkout_attempts")
       .update({
         status: "pending",
@@ -391,16 +479,16 @@ export async function POST() {
         updated_at: new Date().toISOString(),
       })
       .eq("id", attempt.id)
-      .eq("status", "creating");
+      .eq("status", "creating")
+      .select("id")
+      .maybeSingle();
 
-    if (attemptSaveError) {
-      console.error(
-        "[checkout] Falha ao salvar a tentativa do checkout."
-      );
+    if (attemptSaveError || !attemptSaved) {
+      console.error("[checkout] Não foi possível confirmar o registro da tentativa.");
 
       return errorResponse(
         "checkout_persistence_failed",
-        "O checkout pode ter sido criado, mas não foi possível confirmar seu registro. Não tente iniciar outra assinatura.",
+        "O checkout pode ter sido criado, mas seu registro não foi confirmado. Não inicie outra tentativa.",
         503
       );
     }
@@ -422,13 +510,11 @@ export async function POST() {
 
     return NextResponse.json({ checkoutUrl });
   } catch {
-    console.error(
-      "[subscription/checkout] Erro interno ao iniciar checkout."
-    );
+    console.error("[subscription/checkout] Erro interno.");
 
     return errorResponse(
       "server_error",
-      "Não foi possível confirmar o resultado do checkout. Não inicie outra assinatura até verificar a tentativa existente.",
+      "Não foi possível confirmar o resultado. Verifique a tentativa existente antes de tentar novamente.",
       500
     );
   }
