@@ -58,14 +58,16 @@ function noAccess(
 }
 
 /**
- * Verifica a assinatura do usuário autenticado.
+ * Fonte de verdade do acesso Premium.
  *
- * Acesso Premium somente quando:
- * - o usuário está autenticado;
- * - a assinatura tem status active;
- * - existe uma data de término válida e futura.
+ * Acesso permitido somente quando:
+ * - há usuário autenticado;
+ * - o estado é active ou cancelled;
+ * - existe uma data final válida e futura.
  *
- * A ausência de dados ou falhas de consulta nunca libera o Premium.
+ * "cancelled" significa que a renovação foi cancelada,
+ * mas o período já pago ainda pode estar vigente.
+ * O cancelamento nunca cria nem estende um período pago.
  */
 export async function getSubscriptionForUser(
   supabase: SupabaseClient,
@@ -110,13 +112,15 @@ export async function getSubscriptionForUser(
     const planId =
       typeof data.plan_id === "string" ? data.plan_id : null;
 
-    if (status !== "active") {
+    if (status !== "active" && status !== "cancelled") {
       return noAccess(
         true,
         status,
         status === "pending"
           ? "Sua assinatura está aguardando confirmação do pagamento."
-          : "Sua assinatura não está ativa.",
+          : status === "past_due"
+            ? "Não foi possível confirmar a renovação da assinatura."
+            : "Sua assinatura não está ativa.",
         currentPeriodEnd,
         planId
       );
@@ -125,8 +129,8 @@ export async function getSubscriptionForUser(
     if (!currentPeriodEnd) {
       return noAccess(
         true,
-        "active",
-        "A assinatura ainda não possui uma data de término confirmada. A sincronização do pagamento precisa ser verificada.",
+        status,
+        "Não há uma data final confirmada para o período pago.",
         null,
         planId
       );
@@ -134,10 +138,10 @@ export async function getSubscriptionForUser(
 
     const endTimestamp = Date.parse(currentPeriodEnd);
 
-    if (Number.isNaN(endTimestamp)) {
+    if (!Number.isFinite(endTimestamp)) {
       return noAccess(
         true,
-        "active",
+        status,
         "Não foi possível validar a validade da assinatura.",
         currentPeriodEnd,
         planId
@@ -147,8 +151,10 @@ export async function getSubscriptionForUser(
     if (endTimestamp <= Date.now()) {
       return noAccess(
         true,
-        "expired",
-        "Sua assinatura expirou. Renove para recuperar o acesso.",
+        status === "active" ? "expired" : "cancelled",
+        status === "cancelled"
+          ? "Sua assinatura foi cancelada e o período pago terminou."
+          : "Sua assinatura expirou. Renove para recuperar o acesso.",
         currentPeriodEnd,
         planId
       );
@@ -157,9 +163,13 @@ export async function getSubscriptionForUser(
     return {
       authenticated: true,
       hasAccess: true,
-      status: "active",
+      status,
       currentPeriodEnd,
       planId,
+      message:
+        status === "cancelled"
+          ? "A renovação foi cancelada. Seu acesso continua até o fim do período pago."
+          : undefined,
     };
   } catch {
     return noAccess(
