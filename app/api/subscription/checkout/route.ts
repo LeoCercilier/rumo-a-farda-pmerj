@@ -1,80 +1,143 @@
+
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-/**
- * Inicia o checkout de assinatura recorrente no Mercado Pago.
- *
- * - Credenciais apenas no servidor.
- * - Não ativa assinatura; apenas devolve URL de checkout.
- * - A confirmação real virá do webhook.
- *
- * Depende de: MERCADOPAGO_ACCESS_TOKEN, MERCADOPAGO_PLAN_ID (ou lógica de Preapproval),
- * e da tabela subscriptions (criada pelo agente Supabase).
- */
-export async function POST(request: Request) {
+export const runtime = "nodejs";
+
+function getAppUrl(): string | null {
+  const value = process.env.NEXT_PUBLIC_APP_URL;
+
+  if (!value) return null;
+
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const url = new URL(value);
 
-    if (!user) {
-      return NextResponse.json(
-        { error: "unauthenticated", message: "Faça login para assinar." },
-        { status: 401 }
-      );
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      return null;
     }
 
-    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
-    const planId = process.env.MERCADOPAGO_PLAN_ID;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
 
-    if (!accessToken) {
+export async function POST() {
+  try {
+    // Mantém o checkout bloqueado até a integração ser validada.
+    if (process.env.BILLING_ENABLED !== "true") {
       return NextResponse.json(
         {
-          error: "not_configured",
+          error: "billing_disabled",
           message:
-            "Mercado Pago ainda não configurado no servidor. Defina MERCADOPAGO_ACCESS_TOKEN.",
+            "A assinatura está temporariamente indisponível.",
         },
         { status: 503 }
       );
     }
 
-    let body: { planId?: string } = {};
-    try {
-      body = await request.json();
-    } catch {
-      // body opcional
+    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+    const planId = process.env.MERCADOPAGO_PLAN_ID;
+    const appUrl = getAppUrl();
+
+    if (!accessToken || !planId || !appUrl) {
+      return NextResponse.json(
+        {
+          error: "billing_not_configured",
+          message:
+            "A configuração da assinatura ainda não foi concluída.",
+        },
+        { status: 503 }
+      );
     }
 
-    const externalReference = `user:${user.id}:${Date.now()}`;
-    const effectivePlanId = body.planId || planId;
+    const supabase = await createClient();
 
-    // Fluxo de Preapproval (assinaturas) do Mercado Pago.
-    // Documentação: https://www.mercadopago.com.br/developers/pt/docs/subscriptions
-    // O payload exato pode variar conforme o produto (Preapproval vs Subscriptions API).
-    // Ajuste fino fica a cargo da configuração de produção / testes.
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-    const preapprovalPayload: Record<string, unknown> = {
-      reason: "Rumo à Farda — Assinatura de estudos PMERJ",
-      external_reference: externalReference,
-      payer_email: user.email,
-      back_url: `${appUrl}/assinatura?retorno=ok`,
-      status: "pending",
-    };
-
-    if (effectivePlanId) {
-      preapprovalPayload.preapproval_plan_id = effectivePlanId;
-    } else {
-      // Placeholder: valor e frequência devem ser definidos comercialmente.
-      // NÃO inventar preço em produção. Este bloco só permite testar a estrutura.
-      preapprovalPayload.auto_recurring = {
-        frequency: 1,
-        frequency_type: "months",
-        transaction_amount: 1,
-        currency_id: "BRL",
-      };
+    if (authError || !user) {
+      return NextResponse.json(
+        {
+          error: "unauthenticated",
+          message: "Faça login para assinar.",
+        },
+        { status: 401 }
+      );
     }
+
+    if (!user.email) {
+      return NextResponse.json(
+        {
+          error: "email_required",
+          message:
+            "Sua conta precisa ter um e-mail válido para iniciar a assinatura.",
+        },
+        { status: 422 }
+      );
+    }
+
+    const admin = createAdminClient();
+
+    const { data: existing, error: existingError } = await admin
+      .from("subscriptions")
+      .select("status, mp_preapproval_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (existingError) {
+      console.error(
+        "[checkout] Não foi possível consultar a assinatura existente."
+      );
+
+      return NextResponse.json(
+        {
+          error: "subscription_check_failed",
+          message:
+            "Não foi possível verificar sua assinatura. Tente novamente mais tarde.",
+        },
+        { status: 503 }
+      );
+    }
+
+    if (existing?.status === "active") {
+      return NextResponse.json(
+        {
+          error: "subscription_already_active",
+          message: "Sua conta já possui uma assinatura ativa.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (
+      existing?.status === "pending" &&
+      existing.mp_preapproval_id
+    ) {
+      return NextResponse.json(
+        {
+          error: "subscription_pending",
+          message:
+            "Já existe uma assinatura em processamento. Consulte seu status antes de iniciar outra.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const externalReference =
+      `user:${user.id}:${randomUUID()}`;
+
+    const idempotencyKey = randomUUID();
 
     const mpResponse = await fetch(
       "https://api.mercadopago.com/preapproval",
@@ -83,76 +146,109 @@ export async function POST(request: Request) {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
+          "X-Idempotency-Key": idempotencyKey,
         },
-        body: JSON.stringify(preapprovalPayload),
+        body: JSON.stringify({
+          preapproval_plan_id: planId,
+          external_reference: externalReference,
+          payer_email: user.email,
+          back_url: `${appUrl}/assinatura?retorno=ok`,
+        }),
+        cache: "no-store",
       }
     );
+
+    if (!mpResponse.ok) {
+      console.error(
+        "[checkout] O Mercado Pago recusou a criação da assinatura.",
+        { httpStatus: mpResponse.status }
+      );
+
+      return NextResponse.json(
+        {
+          error: "mercadopago_error",
+          message:
+            "Não foi possível iniciar a assinatura. Tente novamente mais tarde.",
+        },
+        { status: 502 }
+      );
+    }
 
     const mpData = (await mpResponse.json()) as {
       id?: string;
       init_point?: string;
       sandbox_init_point?: string;
-      message?: string;
-      error?: string;
+      preapproval_plan_id?: string;
     };
 
-    if (!mpResponse.ok) {
-      console.error("[checkout] Mercado Pago error:", mpData);
-      return NextResponse.json(
-        {
-          error: "mercadopago_error",
-          message:
-            mpData.message ||
-            "Não foi possível iniciar o checkout. Tente novamente mais tarde.",
-        },
-        { status: 502 }
-      );
-    }
-
     const checkoutUrl =
-      mpData.init_point || mpData.sandbox_init_point || null;
+      mpData.init_point ||
+      mpData.sandbox_init_point ||
+      null;
 
-    if (!checkoutUrl) {
+    if (!mpData.id || !checkoutUrl) {
+      console.error(
+        "[checkout] Resposta sem identificador ou URL de checkout."
+      );
+
       return NextResponse.json(
         {
-          error: "no_checkout_url",
-          message: "Mercado Pago não retornou URL de checkout.",
+          error: "invalid_checkout_response",
+          message:
+            "O Mercado Pago não retornou os dados necessários para continuar.",
         },
         { status: 502 }
       );
     }
 
-    // Opcional: registrar pending via service role quando a tabela existir.
-    // Não falha o fluxo se a tabela ainda não existir.
-    try {
-      const { createAdminClient } = await import("@/lib/supabase/admin");
-      const admin = createAdminClient();
-      await admin.from("subscriptions").upsert(
+    const { error: saveError } = await admin
+      .from("subscriptions")
+      .upsert(
         {
           user_id: user.id,
           status: "pending",
-          mp_preapproval_id: mpData.id ?? null,
-          plan_id: effectivePlanId ?? null,
+          mp_preapproval_id: mpData.id,
+          plan_id: mpData.preapproval_plan_id || planId,
+          current_period_start: null,
+          current_period_end: null,
+          cancelled_at: null,
+          raw_payload: null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id" }
       );
-    } catch (e) {
-      console.warn(
-        "[checkout] Não foi possível registrar pending (tabela pode não existir):",
-        e
+
+    if (saveError) {
+      console.error(
+        "[checkout] Falha ao salvar a assinatura pendente no Supabase."
+      );
+
+      // A assinatura pode já existir no Mercado Pago.
+      // Não entregar o link evita um pagamento sem registro local confirmado.
+      return NextResponse.json(
+        {
+          error: "subscription_persistence_failed",
+          message:
+            "Não foi possível registrar a assinatura. Não tente novamente antes de verificar o status com o suporte.",
+        },
+        { status: 503 }
       );
     }
 
     return NextResponse.json({
       checkoutUrl,
-      externalReference,
-      preapprovalId: mpData.id ?? null,
     });
-  } catch (error) {
-    console.error("[subscription/checkout]", error);
+  } catch {
+    console.error(
+      "[subscription/checkout] Erro interno ao iniciar checkout."
+    );
+
     return NextResponse.json(
-      { error: "server_error", message: "Erro interno ao iniciar checkout." },
+      {
+        error: "server_error",
+        message:
+          "Erro interno ao iniciar a assinatura. Tente novamente mais tarde.",
+      },
       { status: 500 }
     );
   }
