@@ -19,7 +19,17 @@ type MercadoPagoSubscription = {
   external_reference?: string;
   preapproval_plan_id?: string;
   next_payment_date?: string;
-  last_modified?: string;
+};
+
+type AuthorizedPayment = {
+  id?: string | number;
+  preapproval_id?: string;
+  status?: string;
+  payment?: {
+    id?: string | number;
+    status?: string;
+    status_detail?: string;
+  };
 };
 
 const SIGNATURE_TOLERANCE_SECONDS = 300;
@@ -30,21 +40,16 @@ function verifySignature(
   dataId: string | null,
   secret: string
 ): boolean {
-  if (!signature || !requestId || !dataId) {
-    return false;
-  }
+  if (!signature || !requestId || !dataId) return false;
 
   const parts: Record<string, string> = {};
 
   for (const part of signature.split(",")) {
     const separator = part.indexOf("=");
-
     if (separator === -1) continue;
 
-    const key = part.slice(0, separator).trim();
-    const value = part.slice(separator + 1).trim();
-
-    parts[key] = value;
+    parts[part.slice(0, separator).trim()] =
+      part.slice(separator + 1).trim();
   }
 
   const timestamp = parts.ts;
@@ -85,31 +90,36 @@ function verifySignature(
   );
 }
 
-function mapStatus(
-  status: string | undefined
-):
-  | "active"
-  | "pending"
-  | "cancelled"
-  | "past_due"
-  | "rejected"
-  | "expired" {
-  switch ((status || "").toLowerCase()) {
-    case "authorized":
-      return "active";
-    case "cancelled":
-    case "canceled":
-      return "cancelled";
-    case "paused":
-      return "past_due";
-    case "rejected":
-      return "rejected";
-    case "expired":
-      return "expired";
-    case "pending":
-    default:
-      return "pending";
+function getUserId(reference: string | undefined): string | null {
+  const match = reference?.match(
+    /^user:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  );
+
+  return match?.[1] ?? null;
+}
+
+async function getMercadoPagoResource<T>(
+  path: string,
+  accessToken: string
+): Promise<T | null> {
+  const response = await fetch(
+    `https://api.mercadopago.com${path}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    }
+  );
+
+  if (!response.ok) {
+    console.error("[webhook] Falha ao consultar recurso do Mercado Pago.", {
+      httpStatus: response.status,
+    });
+    return null;
   }
+
+  return (await response.json()) as T;
 }
 
 export async function POST(request: Request) {
@@ -119,10 +129,6 @@ export async function POST(request: Request) {
     const expectedPlanId = process.env.MERCADOPAGO_PLAN_ID;
 
     if (!secret || !accessToken || !expectedPlanId) {
-      console.error(
-        "[webhook] Configuração do Mercado Pago incompleta."
-      );
-
       return NextResponse.json(
         { error: "webhook_not_configured" },
         { status: 503 }
@@ -146,11 +152,10 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as WebhookBody;
-    const bodyId = body.data?.id;
 
     if (
-      bodyId !== undefined &&
-      String(bodyId) !== dataId
+      body.data?.id !== undefined &&
+      String(body.data.id) !== dataId
     ) {
       return NextResponse.json(
         { error: "resource_id_mismatch" },
@@ -162,93 +167,190 @@ export async function POST(request: Request) {
       body.type === "subscription_preapproval" ||
       body.action?.includes("subscription_preapproval") === true;
 
-    if (!isSubscriptionEvent) {
+    const isInvoiceEvent =
+      body.type === "subscription_authorized_payment" ||
+      body.action?.includes("subscription_authorized_payment") === true;
+
+    if (!isSubscriptionEvent && !isInvoiceEvent) {
       return NextResponse.json({
         received: true,
         processed: false,
       });
     }
 
-    const mpResponse = await fetch(
-      `https://api.mercadopago.com/preapproval/${encodeURIComponent(dataId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        cache: "no-store",
-      }
-    );
+    let preapprovalId: string | null = null;
+    let paymentApproved = false;
 
-    if (!mpResponse.ok) {
-      console.error(
-        "[webhook] Falha ao consultar assinatura no Mercado Pago.",
-        { httpStatus: mpResponse.status }
+    if (isInvoiceEvent) {
+      const invoice = await getMercadoPagoResource<AuthorizedPayment>(
+        `/authorized_payments/${encodeURIComponent(dataId)}`,
+        accessToken
       );
 
+      if (!invoice || String(invoice.id) !== dataId) {
+        return NextResponse.json(
+          { error: "invoice_lookup_failed" },
+          { status: 502 }
+        );
+      }
+
+      preapprovalId = invoice.preapproval_id ?? null;
+      paymentApproved = invoice.payment?.status === "approved";
+
+      // Cobranças pendentes ou recusadas nunca ativam o Premium.
+      // O tratamento completo de falhas recorrentes exige reconciliação
+      // específica e não é feito por este caminho.
+      if (!paymentApproved) {
+        return NextResponse.json({
+          received: true,
+          processed: false,
+        });
+      }
+    } else {
+      preapprovalId = dataId;
+    }
+
+    if (!preapprovalId || !/^\d+$/.test(preapprovalId)) {
+      return NextResponse.json(
+        { error: "invalid_preapproval_id" },
+        { status: 400 }
+      );
+    }
+
+    const resource = await getMercadoPagoResource<MercadoPagoSubscription>(
+      `/preapproval/${encodeURIComponent(preapprovalId)}`,
+      accessToken
+    );
+
+    if (!resource || resource.id !== preapprovalId) {
       return NextResponse.json(
         { error: "subscription_lookup_failed" },
         { status: 502 }
       );
     }
 
-    const resource =
-      (await mpResponse.json()) as MercadoPagoSubscription;
-
-    if (!resource.id || resource.id !== dataId) {
-      return NextResponse.json(
-        { error: "subscription_id_mismatch" },
-        { status: 400 }
-      );
-    }
-
     if (resource.preapproval_plan_id !== expectedPlanId) {
-      console.warn(
-        "[webhook] Plano diferente do plano configurado."
-      );
-
       return NextResponse.json({
         received: true,
         processed: false,
       });
     }
 
-    const userMatch = resource.external_reference?.match(
-      /^user:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    );
-
-    const userId = userMatch?.[1];
+    const userId = getUserId(resource.external_reference);
 
     if (!userId) {
-      console.warn("[webhook] Referência externa inválida.");
-
       return NextResponse.json({
         received: true,
         processed: false,
       });
     }
 
-    let status = mapStatus(resource.status);
-    let periodEnd: string | null = null;
+    const admin = createAdminClient();
 
-    if (status === "active") {
-      const nextPaymentDate = resource.next_payment_date;
-      const parsedDate = nextPaymentDate
-        ? Date.parse(nextPaymentDate)
-        : Number.NaN;
+    const { data: existing, error: existingError } = await admin
+      .from("subscriptions")
+      .select("status, current_period_end, mp_preapproval_id")
+      .eq("user_id", userId)
+      .maybeSingle();
 
-      if (
-        Number.isNaN(parsedDate) ||
-        parsedDate <= Date.now()
-      ) {
-        // Sem validade confiável, não liberar o Premium.
-        status = "pending";
-      } else {
-        periodEnd = new Date(parsedDate).toISOString();
-      }
+    if (existingError) {
+      console.error("[webhook] Falha ao consultar assinatura local.");
+      return NextResponse.json(
+        { error: "subscription_check_failed" },
+        { status: 500 }
+      );
     }
 
-    const now = new Date().toISOString();
-    const admin = createAdminClient();
+    // Impede que uma notificação de outra assinatura substitua
+    // silenciosamente a assinatura já associada a este usuário.
+    if (
+      existing?.mp_preapproval_id &&
+      existing.mp_preapproval_id !== preapprovalId
+    ) {
+      console.warn("[webhook] Identificador de assinatura divergente.");
+      return NextResponse.json({
+        received: true,
+        processed: false,
+      });
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    const nextPaymentMs = resource.next_payment_date
+      ? Date.parse(resource.next_payment_date)
+      : Number.NaN;
+
+    const nextPaymentIsFuture =
+      Number.isFinite(nextPaymentMs) &&
+      nextPaymentMs > now.getTime();
+
+    let status:
+      | "active"
+      | "pending"
+      | "cancelled"
+      | "past_due"
+      | "rejected"
+      | "expired" = "pending";
+
+    let periodEnd: string | null = null;
+    let cancelledAt: string | null = null;
+
+    switch ((resource.status ?? "").toLowerCase()) {
+      case "cancelled":
+      case "canceled":
+        status = "cancelled";
+        cancelledAt = nowIso;
+        break;
+
+      case "paused":
+        status = "past_due";
+        break;
+
+      case "rejected":
+        status = "rejected";
+        break;
+
+      case "expired":
+        status = "expired";
+        break;
+
+      case "authorized":
+        if (paymentApproved && nextPaymentIsFuture) {
+          status = "active";
+          periodEnd = new Date(nextPaymentMs).toISOString();
+        } else {
+          // Não conceder acesso novo sem uma cobrança confirmada.
+          // Preservar o período já validado evita que uma notificação
+          // comum da assinatura corte acesso pago prematuramente.
+          const oldEnd = existing?.current_period_end
+            ? Date.parse(existing.current_period_end)
+            : Number.NaN;
+
+          if (
+            existing?.status === "active" &&
+            Number.isFinite(oldEnd) &&
+            oldEnd > now.getTime()
+          ) {
+            status = "active";
+            periodEnd = new Date(oldEnd).toISOString();
+          }
+        }
+        break;
+
+      default:
+        status = "pending";
+    }
+
+    // Uma cobrança aprovada sem data futura confiável não libera acesso.
+    if (
+      paymentApproved &&
+      resource.status?.toLowerCase() === "authorized" &&
+      !nextPaymentIsFuture
+    ) {
+      status = "pending";
+      periodEnd = null;
+    }
 
     const { error: saveError } = await admin
       .from("subscriptions")
@@ -256,22 +358,24 @@ export async function POST(request: Request) {
         {
           user_id: userId,
           status,
-          mp_preapproval_id: resource.id,
+          mp_preapproval_id: preapprovalId,
           plan_id: resource.preapproval_plan_id,
           current_period_end: periodEnd,
-          cancelled_at:
-            status === "cancelled" ? now : null,
-          raw_payload: resource,
-          updated_at: now,
+          cancelled_at: cancelledAt,
+          raw_payload: {
+            subscription: resource,
+            notification_type: body.type ?? null,
+            notification_action: body.action ?? null,
+            invoice_id: isInvoiceEvent ? dataId : null,
+            payment_approved: paymentApproved,
+          },
+          updated_at: nowIso,
         },
         { onConflict: "user_id" }
       );
 
     if (saveError) {
-      console.error(
-        "[webhook] Falha ao salvar assinatura no Supabase."
-      );
-
+      console.error("[webhook] Falha ao persistir assinatura.");
       return NextResponse.json(
         { error: "subscription_persistence_failed" },
         { status: 500 }
@@ -283,10 +387,7 @@ export async function POST(request: Request) {
       processed: true,
     });
   } catch {
-    console.error(
-      "[webhooks/mercadopago] Erro interno ao processar notificação."
-    );
-
+    console.error("[webhook] Erro interno ao processar notificação.");
     return NextResponse.json(
       { error: "server_error" },
       { status: 500 }
