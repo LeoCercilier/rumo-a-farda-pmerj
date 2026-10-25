@@ -33,7 +33,6 @@ const defaultSubscription: SubscriptionInfo = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-
 function isSubscriptionInfo(value: unknown): value is SubscriptionInfo {
   if (!value || typeof value !== "object") {
     return false;
@@ -55,9 +54,7 @@ function isSubscriptionInfo(value: unknown): value is SubscriptionInfo {
     typeof data.authenticated !== "boolean" ||
     typeof data.hasAccess !== "boolean" ||
     typeof data.status !== "string" ||
-    !validStatuses.includes(
-      data.status as SubscriptionInfo["status"]
-    ) ||
+    !validStatuses.includes(data.status as SubscriptionInfo["status"]) ||
     !(
       data.currentPeriodEnd === null ||
       (
@@ -65,30 +62,27 @@ function isSubscriptionInfo(value: unknown): value is SubscriptionInfo {
         Number.isFinite(Date.parse(data.currentPeriodEnd))
       )
     ) ||
-    !(
-      data.planId === null ||
-      typeof data.planId === "string"
-    )
+    !(data.planId === null || typeof data.planId === "string")
   ) {
     return false;
   }
 
-  // O cliente não deve aceitar estados Premium contraditórios.
-  if (
-    data.hasAccess &&
-    (
+  if (data.hasAccess) {
+    const accessStatus =
+      data.status === "active" || data.status === "cancelled";
+
+    if (
       data.authenticated !== true ||
-      data.status !== "active" ||
+      !accessStatus ||
       data.currentPeriodEnd === null ||
       Date.parse(data.currentPeriodEnd) <= Date.now()
-    )
-  ) {
-    return false;
+    ) {
+      return false;
+    }
   }
 
   return true;
 }
-
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -162,12 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription: authSub },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-
-      // Não manter na interface o estado Premium da conta anterior.
-      setSubscription({
-        ...defaultSubscription,
-      });
-
+      setSubscription({ ...defaultSubscription });
       setLoading(false);
     });
 
@@ -179,8 +168,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (loading) return;
-
-    // A consulta no servidor é a fonte do estado da assinatura.
     void refreshSubscription();
   }, [loading, user?.id, refreshSubscription]);
 
@@ -192,9 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     } finally {
-      setSubscription({
-        ...defaultSubscription,
-      });
+      setSubscription({ ...defaultSubscription });
     }
   }, [supabase]);
 
