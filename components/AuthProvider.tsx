@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -32,6 +33,29 @@ const defaultSubscription: SubscriptionInfo = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function isSubscriptionInfo(value: unknown): value is SubscriptionInfo {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const data = value as Partial<SubscriptionInfo>;
+
+  return (
+    typeof data.authenticated === "boolean" &&
+    typeof data.hasAccess === "boolean" &&
+    typeof data.status === "string" &&
+    typeof data.currentPeriodEnd === "string" ||
+    (
+      !!value &&
+      typeof value === "object" &&
+      typeof (value as Partial<SubscriptionInfo>).authenticated === "boolean" &&
+      typeof (value as Partial<SubscriptionInfo>).hasAccess === "boolean" &&
+      typeof (value as Partial<SubscriptionInfo>).status === "string" &&
+      (value as Partial<SubscriptionInfo>).currentPeriodEnd === null
+    )
+  );
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,16 +68,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshSubscription = useCallback(async () => {
     setSubscriptionLoading(true);
+
     try {
       const res = await fetch("/api/subscription/status", {
+        method: "GET",
         credentials: "include",
+        cache: "no-store",
       });
-      const data = (await res.json()) as SubscriptionInfo;
+
+      if (!res.ok) {
+        throw new Error("Não foi possível consultar a assinatura.");
+      }
+
+      const data: unknown = await res.json();
+
+      if (!isSubscriptionInfo(data)) {
+        throw new Error("Resposta de assinatura inválida.");
+      }
+
       setSubscription(data);
     } catch {
       setSubscription({
         ...defaultSubscription,
-        message: "Não foi possível verificar a assinatura.",
+        message: "Não foi possível confirmar sua assinatura. Tente novamente.",
       });
     } finally {
       setSubscriptionLoading(false);
@@ -63,16 +100,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getUser().then(({ data }) => {
-      if (!mounted) return;
-      setUser(data.user ?? null);
-      setLoading(false);
-    });
+    async function loadUser() {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+
+        if (!mounted) return;
+
+        if (error) {
+          setUser(null);
+        } else {
+          setUser(data.user ?? null);
+        }
+      } catch {
+        if (mounted) {
+          setUser(null);
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadUser();
 
     const {
       data: { subscription: authSub },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+
+      // Não manter na interface o estado Premium da conta anterior.
+      setSubscription({
+        ...defaultSubscription,
+      });
+
       setLoading(false);
     });
 
@@ -84,12 +145,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (loading) return;
+
+    // A consulta no servidor é a fonte do estado da assinatura.
     void refreshSubscription();
   }, [loading, user?.id, refreshSubscription]);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-    setSubscription({ ...defaultSubscription });
+    try {
+      const { error } = await supabase.auth.signOut();
+
+      if (error) {
+        throw error;
+      }
+    } finally {
+      setSubscription({
+        ...defaultSubscription,
+      });
+    }
   }, [supabase]);
 
   const value = useMemo(
@@ -112,14 +184,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
+
   if (!ctx) {
     throw new Error("useAuth deve ser usado dentro de AuthProvider");
   }
+
   return ctx;
 }
