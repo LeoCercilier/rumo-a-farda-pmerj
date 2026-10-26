@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -17,7 +18,7 @@ function AssinaturaContent() {
   useEffect(() => {
     if (retorno === "ok") {
       setNotice(
-        "Retorno do checkout recebido. A liberação do acesso depende da confirmação do pagamento pelo Mercado Pago — isso pode levar alguns instantes. Atualize o status abaixo."
+        "Retorno do checkout recebido. A liberação do acesso depende da confirmação do pagamento pelo Mercado Pago. Atualize o status abaixo."
       );
       void refreshSubscription();
     }
@@ -26,6 +27,7 @@ function AssinaturaContent() {
   async function startCheckout() {
     setCheckoutError(null);
     setCheckoutLoading(true);
+
     try {
       const res = await fetch("/api/subscription/checkout", {
         method: "POST",
@@ -33,11 +35,12 @@ function AssinaturaContent() {
         credentials: "include",
         body: JSON.stringify({}),
       });
+
       const data = await res.json();
 
       if (!res.ok) {
         setCheckoutError(
-          data.message || "Não foi possível iniciar o checkout."
+          data.message || "Não foi possível iniciar a assinatura."
         );
         return;
       }
@@ -70,16 +73,15 @@ function AssinaturaContent() {
       <main className="auth-page">
         <section className="auth-card">
           <span className="eyebrow">ASSINATURA</span>
-          <h1>Acesso premium</h1>
+          <h1>Rumo à Farda Premium</h1>
           <p className="page-intro">
-            Faça login ou crie uma conta para gerenciar sua assinatura e liberar
-            gabaritos, explicações e simulados completos.
+            Entre ou crie sua conta para acompanhar sua assinatura e acessar os
+            recursos Premium quando a contratação estiver disponível.
           </p>
           <p className="auth-links">
             <Link href="/login" className="primary-button">
               ENTRAR →
-            </Link>
-            {" "}
+            </Link>{" "}
             <Link href="/cadastro" className="secondary-button">
               CRIAR CONTA
             </Link>
@@ -99,7 +101,7 @@ function AssinaturaContent() {
     <main className="auth-page">
       <section className="auth-card">
         <span className="eyebrow">SUA CONTA</span>
-        <h1>Assinatura</h1>
+        <h1>Rumo à Farda Premium</h1>
         <p className="page-intro">
           Logado como <strong>{user.email}</strong>
         </p>
@@ -107,21 +109,41 @@ function AssinaturaContent() {
         {notice && <p className="auth-success">{notice}</p>}
 
         <article className="feature-card" style={{ marginTop: "1rem" }}>
-          <h2>Status atual</h2>
+          <h2>Plano mensal</h2>
+          <p>
+            <strong>R$ 19,90 por mês</strong>
+          </p>
+          <p>
+            Cobrança recorrente mensal, com duração indeterminada, conforme as
+            condições apresentadas pelo Mercado Pago antes da confirmação da
+            contratação.
+          </p>
+          <p>
+            A assinatura ainda está em fase de configuração e validação. A
+            contratação ficará disponível após a conclusão dos testes e a
+            autorização para habilitar as cobranças.
+          </p>
+        </article>
+
+        <article className="feature-card" style={{ marginTop: "1rem" }}>
+          <h2>Status da assinatura</h2>
           <p>
             <strong>Estado:</strong> {status}
           </p>
           <p>
-            <strong>Acesso premium:</strong>{" "}
+            <strong>Acesso Premium:</strong>{" "}
             {hasAccess ? "Liberado" : "Bloqueado"}
           </p>
+
           {subscription?.currentPeriodEnd && (
             <p>
               <strong>Válido até:</strong>{" "}
               {new Date(subscription.currentPeriodEnd).toLocaleString("pt-BR")}
             </p>
           )}
+
           {subscription?.message && <p>{subscription.message}</p>}
+
           <button
             className="secondary-button"
             type="button"
@@ -133,21 +155,28 @@ function AssinaturaContent() {
 
         {!hasAccess && (
           <article className="feature-card" style={{ marginTop: "1rem" }}>
-            <h2>Assinar</h2>
+            <h2>Contratação</h2>
             <p>
-              O valor, a frequência e o plano comercial serão confirmados antes
-              da cobrança real. O checkout é processado pelo Mercado Pago; o
-              acesso só é liberado após confirmação do pagamento (webhook), não
-              apenas pelo retorno nesta página.
+              O acesso Premium só será liberado após a confirmação da assinatura
+              pelo servidor. O retorno do checkout, por si só, não comprova
+              pagamento.
             </p>
-            {checkoutError && <p className="auth-error">{checkoutError}</p>}
+
+            {checkoutError && (
+              <p className="auth-error" role="alert">
+                {checkoutError}
+              </p>
+            )}
+
             <button
               className="primary-button"
               type="button"
               disabled={checkoutLoading}
               onClick={() => void startCheckout()}
             >
-              {checkoutLoading ? "Abrindo checkout..." : "IR PARA O CHECKOUT →"}
+              {checkoutLoading
+                ? "VERIFICANDO DISPONIBILIDADE..."
+                : "VERIFICAR DISPONIBILIDADE"}
             </button>
           </article>
         )}
