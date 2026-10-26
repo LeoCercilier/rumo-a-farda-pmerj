@@ -1,57 +1,85 @@
-# Instruções de implantação — Auth, Premium e Mercado Pago
 
-Branch: `feat/auth-premium-access`
+# Instruções de implantação — Rumo à Farda Premium
 
-## 1. Variáveis de ambiente
+## 1. Estado atual e segurança
 
-Copie `.env.example` para `.env.local` e preencha:
+A assinatura comercial planejada é de **R$ 19,90 por mês**.
 
-| Variável | Onde | Obrigatória |
-|----------|------|-------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Cliente + servidor | Sim |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Cliente + servidor | Sim |
-| `NEXT_PUBLIC_APP_URL` | Servidor (redirects) | Sim em produção |
-| `SUPABASE_SERVICE_ROLE_KEY` | Somente servidor | Sim para webhook/pending |
-| `MERCADOPAGO_ACCESS_TOKEN` | Somente servidor | Sim para checkout |
-| `MERCADOPAGO_WEBHOOK_SECRET` | Somente servidor | Recomendado |
-| `MERCADOPAGO_PLAN_ID` | Somente servidor | Quando o plano estiver criado no MP |
+A cobrança deve permanecer desativada até concluir a configuração, os testes e a autorização expressa para habilitá-la.
 
-Nunca publique a service role nem o access token do Mercado Pago no frontend ou em repositório público.
+- `BILLING_ENABLED=false`: mantém o checkout bloqueado.
+- Não considerar o retorno do checkout como confirmação de pagamento.
+- Não ativar questões automaticamente.
+- Não executar alterações no banco sem aprovação explícita.
+- Não publicar chaves secretas no GitHub ou no frontend.
 
-## 2. Supabase (responsável separado)
+Desenvolvimento e correções são feitos diretamente na branch `main`, com revisão de cada arquivo.
 
-Antes do premium funcionar de ponta a ponta:
+## 2. Variáveis de ambiente
 
-1. Revisar `docs/CONTRATO_SUPABASE.md`
-2. Revisar e aplicar (manualmente) o que for aprovado em `docs/SQL_PROPOSTO_NAO_EXECUTADO.sql`
-3. **Crítico:** restringir leitura pública de `correct_option` e `explanation` em `questions`
-4. Habilitar Auth e-mail/senha (e confirmação de e-mail, se desejado)
-5. Configurar URL de redirect: `{APP_URL}/auth/callback`
+Configurar em Vercel → Project → Settings → Environment Variables:
 
-## 3. Mercado Pago
+| Variável | Uso |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | URL do projeto Supabase |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Chave pública publishable do Supabase |
+| `NEXT_PUBLIC_APP_URL` | URL oficial da aplicação |
+| `SUPABASE_SERVICE_ROLE_KEY` | Acesso administrativo, somente no servidor |
+| `MERCADOPAGO_ACCESS_TOKEN` | Token do Mercado Pago, somente no servidor |
+| `MERCADOPAGO_WEBHOOK_SECRET` | Segredo de assinatura do webhook |
+| `MERCADOPAGO_PLAN_ID` | ID técnico do plano recorrente |
+| `BILLING_ENABLED` | `false` até a liberação expressa |
 
-1. Criar aplicação e obter Access Token de **teste**
-2. Criar plano de assinatura (Preapproval Plan) e colocar o id em `MERCADOPAGO_PLAN_ID`
-3. Configurar webhook apontando para `{APP_URL}/api/webhooks/mercadopago?secret=...`
-4. Testar checkout em sandbox; **não** considerar URL de retorno como pagamento confirmado
-5. Validar que o status só muda após o webhook
+Usar a URL oficial de produção em `NEXT_PUBLIC_APP_URL`. Não incluir chaves ou tokens reais em arquivos versionados.
 
-## 4. Build e deploy
+Depois de alterar variáveis na Vercel, gerar um novo deployment para que sejam aplicadas.
 
-```bash
-npm install
-npm run typecheck
-npm run build
-npm start
-```
+## 3. Supabase
 
-Deploy (ex.: Vercel): definir as variáveis de ambiente no painel; branch de produção só após review.
+Antes de liberar o acesso Premium:
 
-## 5. Rollback
+1. Confirmar as variáveis de ambiente e o funcionamento do Supabase Auth.
+2. Verificar os redirects de autenticação, incluindo `/auth/callback`.
+3. Revisar as políticas RLS das tabelas de assinatura e questões.
+4. Impedir que usuários não autorizados consultem respostas corretas e explicações diretamente pela API pública.
+5. Confirmar que a API de questões entrega somente os campos permitidos e exige assinatura válida para verificar respostas Premium.
 
-```bash
-git checkout main
-# ou reverter o merge do PR da branch feat/auth-premium-access
-```
+**Atenção:** a política pública de leitura de questões ativas pode expor `correct_option` e `explanation`. A proteção da API, isoladamente, não corrige uma exposição direta pelo banco.
 
-Nenhuma migration automática foi aplicada neste trabalho; o banco original permanece intacto se o SQL proposto não tiver sido executado.
+O arquivo `docs/SQL_PROPOSTO_NAO_EXECUTADO.sql` contém propostas que precisam ser revisadas e aprovadas antes de qualquer execução. Não aplicar alterações automaticamente.
+
+## 4. Mercado Pago
+
+1. Confirmar o plano recorrente de R$ 19,90 por mês.
+2. Obter o ID técnico do plano e configurar `MERCADOPAGO_PLAN_ID`. O link comercial de compartilhamento não substitui esse ID.
+3. Usar credenciais de teste para validar o fluxo antes de qualquer cobrança real.
+4. Configurar o webhook para:
+
+   `https://rumo-a-farda-pmerj.vercel.app/api/webhooks/mercadopago`
+
+5. Cadastrar no painel do Mercado Pago o segredo de webhook correspondente e configurar o mesmo valor em `MERCADOPAGO_WEBHOOK_SECRET`.
+6. Não acrescentar o segredo como parâmetro da URL do webhook.
+7. Validar a assinatura HMAC da notificação e processar os eventos de forma idempotente.
+8. Confirmar o status da assinatura no servidor antes de liberar o acesso Premium.
+
+A conta do Mercado Pago também pode ser utilizada por outros projetos, mas as URLs de webhook, os planos e as configurações de cada integração devem ser mantidos separados.
+
+## 5. Validação antes da publicação
+
+- [ ] Login, cadastro e recuperação de acesso testados.
+- [ ] Usuário sem assinatura não acessa recursos Premium.
+- [ ] Checkout bloqueado quando `BILLING_ENABLED=false`.
+- [ ] Credenciais de teste configuradas no ambiente apropriado.
+- [ ] Webhook validado com eventos de teste.
+- [ ] Pagamento pendente ou cancelado não libera acesso indevidamente.
+- [ ] Assinatura confirmada libera acesso conforme as regras do servidor.
+- [ ] Exposição de respostas corretas pelo Supabase corrigida e testada.
+- [ ] Build e verificação de tipos concluídos sem erros.
+
+## 6. Liberação de cobrança
+
+Não alterar `BILLING_ENABLED` para `true` até que os testes tenham sido concluídos, os bloqueios de segurança corrigidos e exista autorização expressa para habilitar cobranças.
+
+## 7. Recuperação
+
+Se uma atualização causar falha, identificar o commit responsável e usar a opção de reversão do próprio GitHub, revisando as alterações antes de confirmar. Preservar arquivos locais, backups e dados existentes.
