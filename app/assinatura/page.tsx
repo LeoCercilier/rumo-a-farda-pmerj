@@ -1,4 +1,4 @@
- 
+
 "use client";
 
 import Link from "next/link";
@@ -11,8 +11,11 @@ function AssinaturaContent() {
     useAuth();
   const searchParams = useSearchParams();
   const retorno = searchParams.get("retorno");
+
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,6 +61,49 @@ function AssinaturaContent() {
     }
   }
 
+  async function cancelSubscription() {
+    const confirmed = window.confirm(
+      "Deseja realmente cancelar sua assinatura Premium? O Mercado Pago será consultado para confirmar o cancelamento. A atualização do acesso no aplicativo depende da confirmação recebida pelo servidor."
+    );
+
+    if (!confirmed) return;
+
+    setCancelError(null);
+    setNotice(null);
+    setCancelLoading(true);
+
+    try {
+      const res = await fetch("/api/subscription/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({}),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setCancelError(
+          data.message || "Não foi possível confirmar o cancelamento."
+        );
+        return;
+      }
+
+      setNotice(
+        data.message ||
+          "Solicitação processada. Atualize o status para conferir a situação da assinatura."
+      );
+
+      await refreshSubscription();
+    } catch {
+      setCancelError(
+        "Falha de comunicação. Confira o status da assinatura antes de tentar novamente."
+      );
+    } finally {
+      setCancelLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="auth-page">
@@ -96,6 +142,7 @@ function AssinaturaContent() {
 
   const hasAccess = subscription?.hasAccess === true;
   const status = subscription?.status ?? "none";
+  const canCancel = status === "active" || status === "pending";
 
   return (
     <main className="auth-page">
@@ -106,7 +153,11 @@ function AssinaturaContent() {
           Logado como <strong>{user.email}</strong>
         </p>
 
-        {notice && <p className="auth-success">{notice}</p>}
+        {notice && (
+          <p className="auth-success" role="status">
+            {notice}
+          </p>
+        )}
 
         <article className="feature-card" style={{ marginTop: "1rem" }}>
           <h2>Plano mensal</h2>
@@ -119,9 +170,8 @@ function AssinaturaContent() {
             contratação.
           </p>
           <p>
-            A assinatura ainda está em fase de configuração e validação. A
-            contratação ficará disponível após a conclusão dos testes e a
-            autorização para habilitar as cobranças.
+            A contratação ainda depende da conclusão dos testes e da autorização
+            para habilitar as cobranças.
           </p>
         </article>
 
@@ -147,10 +197,38 @@ function AssinaturaContent() {
           <button
             className="secondary-button"
             type="button"
+            disabled={cancelLoading || checkoutLoading}
             onClick={() => void refreshSubscription()}
           >
             ATUALIZAR STATUS
           </button>
+
+          {canCancel && (
+            <div style={{ marginTop: "1rem" }}>
+              <p>
+                Você pode solicitar o cancelamento da assinatura por aqui.
+                Aguarde a confirmação do Mercado Pago para verificar a
+                atualização do status e do acesso.
+              </p>
+
+              {cancelError && (
+                <p className="auth-error" role="alert">
+                  {cancelError}
+                </p>
+              )}
+
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={cancelLoading || checkoutLoading}
+                onClick={() => void cancelSubscription()}
+              >
+                {cancelLoading
+                  ? "PROCESSANDO CANCELAMENTO..."
+                  : "CANCELAR ASSINATURA"}
+              </button>
+            </div>
+          )}
         </article>
 
         {!hasAccess && (
@@ -171,7 +249,7 @@ function AssinaturaContent() {
             <button
               className="primary-button"
               type="button"
-              disabled={checkoutLoading}
+              disabled={checkoutLoading || cancelLoading}
               onClick={() => void startCheckout()}
             >
               {checkoutLoading
