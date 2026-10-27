@@ -1,4 +1,3 @@
-
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -233,15 +232,17 @@ async function searchByExternalReference(
 function getCheckoutDetails(
   resource: MercadoPagoResource,
   expectedReference: string
-): { id: string; url: string } | null {
+): { id: string; url: string | null } | null {
   const id = resource.id !== undefined ? String(resource.id) : "";
-  const url = resource.init_point || resource.sandbox_init_point || "";
+  const rawUrl = resource.init_point || resource.sandbox_init_point || "";
+  const url = rawUrl || null;
+  const status = (resource.status ?? "").toLowerCase();
 
   if (
     !isValidPreapprovalId(id) ||
     resource.external_reference !== expectedReference ||
-    !url ||
-    !isMercadoPagoCheckoutUrl(url)
+    (url !== null && !isMercadoPagoCheckoutUrl(url)) ||
+    (!url && status !== "authorized" && status !== "pending")
   ) {
     return null;
   }
@@ -252,9 +253,12 @@ function getCheckoutDetails(
 async function persistCheckoutResult(
   admin: ReturnType<typeof createAdminClient>,
   attempt: CheckoutAttempt,
-  resource: MercadoPagoResource,
-  accessToken: string
-): Promise<{ ok: boolean; checkoutUrl?: string }> {
+  resource: MercadoPagoResource
+): Promise<{
+  ok: boolean;
+  checkoutUrl?: string;
+  subscriptionCreated?: boolean;
+}> {
   const details = getCheckoutDetails(resource, attempt.external_reference);
 
   if (!details) return { ok: false };
@@ -287,7 +291,9 @@ async function persistCheckoutResult(
     return { ok: false };
   }
 
-  return { ok: true, checkoutUrl: details.url };
+  return details.url
+    ? { ok: true, checkoutUrl: details.url }
+    : { ok: true, subscriptionCreated: true };
 }
 
 function sanitizeDiagnosticText(
@@ -361,8 +367,35 @@ async function getErrorDiagnostic(response: Response) {
   return diagnostic;
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    let cardTokenId: string;
+
+    try {
+      const body = (await request.json()) as {
+        card_token_id?: unknown;
+      };
+
+      cardTokenId =
+        typeof body.card_token_id === "string"
+          ? body.card_token_id.trim()
+          : "";
+    } catch {
+      return errorResponse(
+        "invalid_request",
+        "Não foi possível ler os dados do cartão. Preencha o formulário novamente.",
+        400
+      );
+    }
+
+    if (!/^[A-Za-z0-9_-]{10,500}$/.test(cardTokenId)) {
+      return errorResponse(
+        "card_token_required",
+        "Preencha os dados do cartão para continuar.",
+        422
+      );
+    }
+
     if (process.env.BILLING_ENABLED !== "true") {
       return errorResponse(
         "billing_disabled",
@@ -389,7 +422,11 @@ export async function POST() {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return errorResponse("unauthenticated", "Faça login para assinar.", 401);
+      return errorResponse(
+        "unauthenticated",
+        "Faça login para assinar.",
+        401
+      );
     }
 
     if (!user.email) {
@@ -496,9 +533,16 @@ export async function POST() {
     }
 
     if (attempt.status === "pending") {
+      if (!attempt.mp_preapproval_id) {
+        return errorResponse(
+          "checkout_attempt_inconsistent",
+          "A tentativa existente precisa ser verificada.",
+          409
+        );
+      }
+
       if (
-        !attempt.mp_preapproval_id ||
-        !attempt.checkout_url ||
+        attempt.checkout_url &&
         !isMercadoPagoCheckoutUrl(attempt.checkout_url)
       ) {
         return errorResponse(
@@ -522,7 +566,13 @@ export async function POST() {
         );
       }
 
-      return NextResponse.json({ checkoutUrl: attempt.checkout_url });
+      return attempt.checkout_url
+        ? NextResponse.json({ checkoutUrl: attempt.checkout_url })
+        : NextResponse.json({
+            subscriptionCreated: true,
+            message:
+              "Assinatura registrada. Aguardando confirmação do Mercado Pago.",
+          });
     }
 
     if (!ownsNewAttempt) {
@@ -562,8 +612,8 @@ export async function POST() {
 
       attempt = claimed as CheckoutAttempt;
 
-      // Primeiro consultar a referência antiga. Não repetir a criação
-      // se o Mercado Pago já tiver uma assinatura para ela.
+      // Consultar primeiro a referência antiga para não duplicar
+      // uma assinatura que já possa existir no Mercado Pago.
       const reconciliation = await searchByExternalReference(
         attempt.external_reference,
         accessToken
@@ -582,9 +632,6 @@ export async function POST() {
         const resourcePlan = resource.preapproval_plan_id ?? null;
         const configuredPlan = process.env.MERCADOPAGO_PLAN_ID;
 
-        // Aceitar o recurso antigo somente se ele for deste produto:
-        // o plano legado configurado ou uma assinatura sem plano com
-        // o preço e a descrição esperados, validados pelo webhook.
         if (resourcePlan && resourcePlan !== configuredPlan) {
           return errorResponse(
             "checkout_reconciliation_required",
@@ -596,11 +643,10 @@ export async function POST() {
         const result = await persistCheckoutResult(
           admin,
           attempt,
-          resource,
-          accessToken
+          resource
         );
 
-        if (!result.ok || !result.checkoutUrl) {
+        if (!result.ok) {
           return errorResponse(
             "checkout_persistence_failed",
             "A assinatura encontrada precisa ser reconciliada antes de continuar.",
@@ -608,12 +654,18 @@ export async function POST() {
           );
         }
 
-        return NextResponse.json({ checkoutUrl: result.checkoutUrl });
+        return result.checkoutUrl
+          ? NextResponse.json({ checkoutUrl: result.checkoutUrl })
+          : NextResponse.json({
+              subscriptionCreated: true,
+              message:
+                "Assinatura registrada. Aguardando confirmação do Mercado Pago.",
+            });
       }
 
       // A API não encontrou recurso para a referência anterior.
-      // Rotacionar a chave e a referência evita reutilizar uma chave
-      // de idempotência com um corpo diferente.
+      // Uma nova chave e referência evitam reutilizar a mesma chave
+      // de idempotência com dados diferentes.
       const newIdempotencyKey = randomUUID();
       const newExternalReference = `user:${user.id}:${randomUUID()}`;
 
@@ -675,7 +727,8 @@ export async function POST() {
             currency_id: "BRL",
           },
           back_url: `${appUrl}/assinatura?retorno=ok`,
-          status: "pending",
+          card_token_id: cardTokenId,
+          status: "authorized",
         }),
         cache: "no-store",
         signal: AbortSignal.timeout(15000),
@@ -715,19 +768,24 @@ export async function POST() {
     const result = await persistCheckoutResult(
       admin,
       attempt,
-      resource,
-      accessToken
+      resource
     );
 
-    if (!result.ok || !result.checkoutUrl) {
+    if (!result.ok) {
       return errorResponse(
         "checkout_persistence_failed",
-        "O checkout pode ter sido criado, mas o registro não foi confirmado. Não inicie outra tentativa.",
+        "A assinatura pode ter sido criada, mas o registro não foi confirmado. Não inicie outra tentativa.",
         503
       );
     }
 
-    return NextResponse.json({ checkoutUrl: result.checkoutUrl });
+    return result.checkoutUrl
+      ? NextResponse.json({ checkoutUrl: result.checkoutUrl })
+      : NextResponse.json({
+          subscriptionCreated: true,
+          message:
+            "Assinatura registrada. Aguardando confirmação do Mercado Pago.",
+        });
   } catch {
     console.error("[subscription/checkout] Erro interno.");
 
