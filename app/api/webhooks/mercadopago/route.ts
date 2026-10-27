@@ -9,27 +9,50 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
+const SIGNATURE_TOLERANCE_SECONDS = 300;
+const STALE_EVENT_MINUTES = 5;
+const PREMIUM_REASON = "Rumo à Farda Premium — Soldado PMERJ";
+const PREMIUM_PRICE_CENTS = 1990;
+const PREMIUM_CURRENCY = "BRL";
+
 type WebhookBody = {
   id?: string | number;
   date_created?: string;
   type?: string;
   action?: string;
-  data?: {
-    id?: string | number;
-  };
+  data?: { id?: string | number };
+};
+
+type RecurringData = {
+  frequency?: number;
+  frequency_type?: string;
+  transaction_amount?: number | string;
+  currency_id?: string;
 };
 
 type MercadoPagoSubscription = {
   id?: string | number;
   status?: string;
+  reason?: string;
   external_reference?: string;
-  preapproval_plan_id?: string;
+  preapproval_plan_id?: string | null;
   next_payment_date?: string;
+  auto_recurring?: RecurringData;
+};
+
+type MercadoPagoPlan = {
+  id?: string | number;
+  reason?: string;
+  status?: string;
+  auto_recurring?: RecurringData;
 };
 
 type AuthorizedPayment = {
   id?: string | number;
   preapproval_id?: string | number;
+  external_reference?: string;
+  currency_id?: string;
+  transaction_amount?: number | string;
   status?: string;
   payment?: {
     id?: string | number;
@@ -46,11 +69,30 @@ type EventRecord = {
   updated_at: string;
 };
 
-const SIGNATURE_TOLERANCE_SECONDS = 300;
-const STALE_EVENT_MINUTES = 5;
-
 function response(error: string, status: number) {
   return NextResponse.json({ error }, { status });
+}
+
+function amountInCents(value: unknown): number | null {
+  const amount =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(amount) || amount < 0) return null;
+
+  return Math.round(amount * 100);
+}
+
+function isPremiumRecurring(data?: RecurringData): boolean {
+  return (
+    data?.frequency === 1 &&
+    data.frequency_type === "months" &&
+    amountInCents(data.transaction_amount) === PREMIUM_PRICE_CENTS &&
+    data.currency_id === PREMIUM_CURRENCY
+  );
 }
 
 function verifySignature(
@@ -171,9 +213,8 @@ export async function POST(request: Request) {
   try {
     const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
-    const expectedPlanId = process.env.MERCADOPAGO_PLAN_ID;
 
-    if (!secret || !accessToken || !expectedPlanId) {
+    if (!secret || !accessToken) {
       return response("webhook_not_configured", 503);
     }
 
@@ -358,10 +399,10 @@ export async function POST(request: Request) {
     }
 
     let preapprovalId: string | null = null;
-    let paymentApproved = false;
+    let invoice: AuthorizedPayment | null = null;
 
     if (isInvoiceEvent) {
-      const invoice = await getMercadoPagoResource<AuthorizedPayment>(
+      invoice = await getMercadoPagoResource<AuthorizedPayment>(
         `/authorized_payments/${encodeURIComponent(dataId)}`,
         accessToken
       );
@@ -374,8 +415,6 @@ export async function POST(request: Request) {
         invoice.preapproval_id !== undefined
           ? String(invoice.preapproval_id)
           : null;
-
-      paymentApproved = invoice.payment?.status === "approved";
     } else {
       preapprovalId = dataId;
     }
@@ -400,14 +439,54 @@ export async function POST(request: Request) {
       throw new Error("subscription_lookup_failed");
     }
 
-    if (resource.preapproval_plan_id !== expectedPlanId) {
-      return await finishIgnored("plan_mismatch");
+    // Validar a identidade comercial e o valor antes de aceitar
+    // qualquer evento para esta assinatura.
+    if (resource.reason !== PREMIUM_REASON) {
+      return await finishIgnored("product_reason_mismatch");
     }
 
-    const userId = getUserId(resource.external_reference);
-
-    if (!userId) {
+    if (!getUserId(resource.external_reference)) {
       return await finishIgnored("invalid_external_reference");
+    }
+
+    const userId = getUserId(resource.external_reference)!;
+
+    if (resource.preapproval_plan_id) {
+      // Compatibilidade com assinaturas legadas: o plano remoto
+      // também precisa corresponder ao produto e preço esperados.
+      const planId = resource.preapproval_plan_id;
+      const configuredPlanId = process.env.MERCADOPAGO_PLAN_ID;
+
+      if (!configuredPlanId || planId !== configuredPlanId) {
+        return await finishIgnored("plan_mismatch");
+      }
+
+      const plan = await getMercadoPagoResource<MercadoPagoPlan>(
+        `/preapproval_plan/${encodeURIComponent(planId)}`,
+        accessToken
+      );
+
+      if (
+        !plan ||
+        String(plan.id) !== planId ||
+        plan.reason !== PREMIUM_REASON ||
+        !isPremiumRecurring(plan.auto_recurring)
+      ) {
+        return await finishIgnored("legacy_plan_validation_failed");
+      }
+    } else if (!isPremiumRecurring(resource.auto_recurring)) {
+      // Novo modelo: sem plano associado, recorrência mensal
+      // de R$ 19,90 em BRL definida na própria assinatura.
+      return await finishIgnored("recurring_terms_mismatch");
+    }
+
+    if (invoice) {
+      if (
+        invoice.currency_id !== PREMIUM_CURRENCY ||
+        amountInCents(invoice.transaction_amount) !== PREMIUM_PRICE_CENTS
+      ) {
+        return await finishIgnored("invoice_amount_mismatch");
+      }
     }
 
     const { data: existing, error: existingError } = await admin
@@ -447,8 +526,12 @@ export async function POST(request: Request) {
       Number.isFinite(nextPaymentMs) &&
       nextPaymentMs > currentTime;
 
-    // Uma notificação de assinatura não comprova, por si só,
-    // que houve pagamento. A confirmação vem da fatura consultada.
+    const paymentApproved =
+      Boolean(invoice) &&
+      invoice?.payment?.status === "approved";
+
+    // Só uma fatura consultada no Mercado Pago, com pagamento
+    // aprovado e termos comerciais corretos, pode ativar o acesso.
     const confirmedPayment =
       isInvoiceEvent &&
       paymentApproved &&
@@ -474,21 +557,17 @@ export async function POST(request: Request) {
       existing?.current_period_start ?? null;
 
     if (resourceCancelled || existingCancelled) {
-      // Eventos atrasados não reativam assinaturas canceladas.
-      // A validade já registrada é preservada sem prorrogação
-      // baseada apenas na data da próxima cobrança.
+      // Eventos antigos não reativam uma assinatura cancelada.
       status = "cancelled";
       periodEnd = existing?.current_period_end ?? null;
       cancelledAt = existing?.cancelled_at ?? nowIso;
     } else if (confirmedPayment) {
-      // Não encurtar uma vigência futura já registrada.
       const preservedEndMs = oldEndIsFuture
         ? Math.max(oldEndMs, nextPaymentMs)
         : nextPaymentMs;
 
       status = "active";
       periodEnd = new Date(preservedEndMs).toISOString();
-
       periodStart = oldEndIsFuture
         ? new Date(oldEndMs).toISOString()
         : nowIso;
@@ -496,8 +575,7 @@ export async function POST(request: Request) {
       existing?.status === "active" &&
       oldEndIsFuture
     ) {
-      // Pausa, rejeição ou notificação atrasada não apagam
-      // um período pago que continua vigente.
+      // Notificação pendente ou atrasada não apaga um período pago.
       status = "active";
       periodEnd = new Date(oldEndMs).toISOString();
     } else {
@@ -505,19 +583,15 @@ export async function POST(request: Request) {
         case "authorized":
           status = "pending";
           break;
-
         case "paused":
           status = "past_due";
           break;
-
         case "rejected":
           status = "rejected";
           break;
-
         case "expired":
           status = "expired";
           break;
-
         default:
           status = "pending";
       }
@@ -530,7 +604,7 @@ export async function POST(request: Request) {
           user_id: userId,
           status,
           mp_preapproval_id: preapprovalId,
-          plan_id: resource.preapproval_plan_id,
+          plan_id: resource.preapproval_plan_id ?? null,
           current_period_start: periodStart,
           current_period_end: periodEnd,
           cancelled_at: cancelledAt,
@@ -538,8 +612,10 @@ export async function POST(request: Request) {
             subscription: resource,
             notification_type: body.type ?? null,
             notification_action: body.action ?? null,
-            invoice_id: isInvoiceEvent ? dataId : null,
-            payment_approved: paymentApproved,
+            invoice_id: invoice ? dataId : null,
+            payment_status: invoice?.payment?.status ?? null,
+            payment_status_detail:
+              invoice?.payment?.status_detail ?? null,
           },
           updated_at: nowIso,
         },
