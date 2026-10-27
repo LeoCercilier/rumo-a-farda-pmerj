@@ -59,9 +59,612 @@ declare global {
   }
 }
 
+const styles = `
+  .subscription-page {
+    min-height: 100vh;
+    padding: 32px 16px 48px;
+    color: #f1f5f9;
+    background:
+      radial-gradient(ellipse at 50% 0%, rgba(22, 101, 52, .18), transparent 55%),
+      #080d16;
+  }
+
+  .subscription-shell {
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  .subscription-topline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .subscription-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #f8fafc;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: .02em;
+  }
+
+  .subscription-brand-mark {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(74, 222, 128, .35);
+    border-radius: 12px;
+    color: #86efac;
+    background: rgba(22, 101, 52, .18);
+    font-size: 18px;
+  }
+
+  .subscription-back {
+    color: #cbd5e1;
+    font-size: 13px;
+    text-decoration: none;
+  }
+
+  .subscription-back:hover {
+    color: #86efac;
+  }
+
+  .subscription-hero {
+    margin-bottom: 22px;
+  }
+
+  .subscription-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 10px;
+    color: #86efac;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+
+  .subscription-eyebrow::before {
+    width: 18px;
+    height: 2px;
+    background: #4ade80;
+    content: "";
+  }
+
+  .subscription-title {
+    margin: 0;
+    color: #f8fafc;
+    font-size: clamp(27px, 5vw, 38px);
+    font-weight: 850;
+    line-height: 1.12;
+    letter-spacing: -.04em;
+  }
+
+  .subscription-subtitle {
+    max-width: 560px;
+    margin: 12px 0 0;
+    color: #a8b4c7;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  .subscription-card {
+    margin-top: 16px;
+    padding: 22px;
+    border: 1px solid #263447;
+    border-radius: 20px;
+    background: #101827;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, .16);
+  }
+
+  .subscription-plan {
+    position: relative;
+    overflow: hidden;
+    border-color: rgba(74, 222, 128, .3);
+    background:
+      linear-gradient(125deg, rgba(22, 101, 52, .22), transparent 70%),
+      #101827;
+  }
+
+  .subscription-plan::after {
+    position: absolute;
+    top: -40px;
+    right: -25px;
+    width: 130px;
+    height: 130px;
+    border: 1px solid rgba(74, 222, 128, .12);
+    border-radius: 50%;
+    box-shadow: 0 0 0 18px rgba(74, 222, 128, .025),
+      0 0 0 38px rgba(74, 222, 128, .02);
+    content: "";
+    pointer-events: none;
+  }
+
+  .subscription-plan-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .subscription-plan-name {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 17px;
+    font-weight: 800;
+  }
+
+  .subscription-plan-description {
+    margin: 7px 0 0;
+    color: #a8b4c7;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .subscription-plan-badge {
+    flex-shrink: 0;
+    padding: 6px 9px;
+    border: 1px solid rgba(74, 222, 128, .25);
+    border-radius: 999px;
+    color: #86efac;
+    background: rgba(22, 101, 52, .2);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .06em;
+  }
+
+  .subscription-price {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 22px;
+  }
+
+  .subscription-price-value {
+    color: #fff;
+    font-size: clamp(34px, 7vw, 44px);
+    font-weight: 850;
+    line-height: 1;
+    letter-spacing: -.04em;
+  }
+
+  .subscription-price-period {
+    color: #a8b4c7;
+    font-size: 13px;
+  }
+
+  .subscription-plan-note {
+    margin: 12px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid #263447;
+    color: #a8b4c7;
+    font-size: 12px;
+    line-height: 1.65;
+  }
+
+  .subscription-section-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 13px;
+    margin-bottom: 20px;
+  }
+
+  .subscription-step {
+    display: grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(74, 222, 128, .35);
+    border-radius: 11px;
+    color: #86efac;
+    background: rgba(22, 101, 52, .17);
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .subscription-section-title {
+    margin: 1px 0 5px;
+    color: #f8fafc;
+    font-size: 17px;
+    font-weight: 800;
+  }
+
+  .subscription-section-description {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .subscription-account {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    margin-bottom: 17px;
+    padding: 13px 14px;
+    border: 1px solid #263447;
+    border-radius: 12px;
+    background: #0b1220;
+  }
+
+  .subscription-account-icon {
+    display: grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    color: #cbd5e1;
+    background: #1e293b;
+    font-size: 15px;
+  }
+
+  .subscription-account-label {
+    margin: 0 0 3px;
+    color: #94a3b8;
+    font-size: 11px;
+  }
+
+  .subscription-account-email {
+    overflow-wrap: anywhere;
+    margin: 0;
+    color: #e2e8f0;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .subscription-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 17px 14px;
+  }
+
+  .subscription-field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .subscription-field-wide {
+    grid-column: 1 / -1;
+  }
+
+  .subscription-field label {
+    color: #dbe4f0;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .subscription-field input,
+  .subscription-field select {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: 47px;
+    padding: 0 13px;
+    border: 1px solid #344256;
+    border-radius: 10px;
+    outline: none;
+    color: #f8fafc;
+    background: #0b1220;
+    font: inherit;
+    font-size: 14px;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+
+  .subscription-field input::placeholder {
+    color: #64748b;
+  }
+
+  .subscription-field input:focus,
+  .subscription-field select:focus {
+    border-color: #4ade80;
+    box-shadow: 0 0 0 3px rgba(74, 222, 128, .11);
+  }
+
+  .subscription-field select:invalid {
+    color: #94a3b8;
+  }
+
+  .subscription-field-hint {
+    margin: -2px 0 0;
+    color: #94a3b8;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .subscription-form-divider {
+    grid-column: 1 / -1;
+    height: 1px;
+    margin: 2px 0;
+    background: #263447;
+  }
+
+  .subscription-form-subheading {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: #cbd5e1;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .04em;
+  }
+
+  .subscription-primary-button,
+  .subscription-secondary-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    min-height: 47px;
+    padding: 12px 16px;
+    border: 1px solid transparent;
+    border-radius: 11px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 850;
+    letter-spacing: .035em;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    transition: transform .15s ease, background .15s ease, opacity .15s ease;
+  }
+
+  .subscription-primary-button {
+    color: #052e16;
+    background: #4ade80;
+  }
+
+  .subscription-primary-button:hover:not(:disabled) {
+    background: #86efac;
+    transform: translateY(-1px);
+  }
+
+  .subscription-secondary-button {
+    border-color: #344256;
+    color: #e2e8f0;
+    background: #172235;
+  }
+
+  .subscription-secondary-button:hover:not(:disabled) {
+    background: #223149;
+  }
+
+  .subscription-primary-button:disabled,
+  .subscription-secondary-button:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+  }
+
+  .subscription-submit {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 52px;
+    margin-top: 2px;
+    font-size: 13px;
+  }
+
+  .subscription-secure-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    grid-column: 1 / -1;
+    margin: -4px 0 0;
+    color: #94a3b8;
+    font-size: 11px;
+    line-height: 1.7;
+  }
+
+  .subscription-secure-note span {
+    flex-shrink: 0;
+    color: #86efac;
+  }
+
+  .subscription-alert {
+    margin: 0 0 16px;
+    padding: 13px 14px;
+    border: 1px solid #475569;
+    border-radius: 11px;
+    color: #e2e8f0;
+    background: #172235;
+    font-size: 13px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+
+  .subscription-alert-error {
+    border-color: rgba(248, 113, 113, .35);
+    color: #fecaca;
+    background: rgba(127, 29, 29, .18);
+  }
+
+  .subscription-alert-success {
+    border-color: rgba(74, 222, 128, .3);
+    color: #bbf7d0;
+    background: rgba(22, 101, 52, .17);
+  }
+
+  .subscription-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid #263447;
+  }
+
+  .subscription-status-row:last-of-type {
+    border-bottom: 0;
+  }
+
+  .subscription-status-label {
+    color: #94a3b8;
+    font-size: 12px;
+  }
+
+  .subscription-status-value {
+    overflow-wrap: anywhere;
+    color: #e2e8f0;
+    font-size: 13px;
+    font-weight: 750;
+    text-align: right;
+  }
+
+  .subscription-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border: 1px solid #475569;
+    border-radius: 999px;
+    color: #cbd5e1;
+    background: #172235;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .subscription-status-pill::before {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #94a3b8;
+    content: "";
+  }
+
+  .subscription-status-pill-active {
+    border-color: rgba(74, 222, 128, .3);
+    color: #86efac;
+    background: rgba(22, 101, 52, .17);
+  }
+
+  .subscription-status-pill-active::before {
+    background: #4ade80;
+  }
+
+  .subscription-status-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 17px;
+  }
+
+  .subscription-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 22px;
+    color: #94a3b8;
+    font-size: 12px;
+  }
+
+  .subscription-footer a,
+  .subscription-footer button {
+    color: #cbd5e1;
+    text-decoration: none;
+  }
+
+  .subscription-footer a:hover,
+  .subscription-footer button:hover {
+    color: #86efac;
+  }
+
+  .subscription-footer button {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .subscription-footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  @media (max-width: 520px) {
+    .subscription-page {
+      padding: 20px 12px 32px;
+    }
+
+    .subscription-topline {
+      margin-bottom: 27px;
+    }
+
+    .subscription-brand {
+      font-size: 12px;
+    }
+
+    .subscription-brand-mark {
+      width: 34px;
+      height: 34px;
+    }
+
+    .subscription-card {
+      padding: 17px 14px;
+      border-radius: 16px;
+    }
+
+    .subscription-plan-top {
+      gap: 8px;
+    }
+
+    .subscription-plan-badge {
+      padding: 5px 7px;
+      font-size: 9px;
+    }
+
+    .subscription-form {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 15px;
+    }
+
+    .subscription-field-wide,
+    .subscription-form-divider,
+    .subscription-form-subheading,
+    .subscription-submit,
+    .subscription-secure-note {
+      grid-column: 1;
+    }
+
+    .subscription-field input,
+    .subscription-field select {
+      height: 49px;
+      font-size: 16px;
+    }
+
+    .subscription-status-actions > button {
+      width: 100%;
+    }
+
+    .subscription-footer {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+`;
+
 function AssinaturaContent() {
-  const { user, loading, subscription, refreshSubscription, signOut } =
-    useAuth();
+  const {
+    user,
+    loading,
+    subscription,
+    refreshSubscription,
+    signOut,
+  } = useAuth();
+
   const searchParams = useSearchParams();
   const retorno = searchParams.get("retorno");
 
@@ -323,36 +926,64 @@ function AssinaturaContent() {
 
   if (loading) {
     return (
-      <main className="auth-page">
-        <section className="auth-card">
-          <p>Carregando...</p>
-        </section>
+      <main className="subscription-page">
+        <style jsx global>{styles}</style>
+        <div className="subscription-shell">
+          <section className="subscription-card">
+            Carregando sua conta...
+          </section>
+        </div>
       </main>
     );
   }
 
   if (!user) {
     return (
-      <main className="auth-page">
-        <section className="auth-card">
-          <span className="eyebrow">ASSINATURA</span>
-          <h1>Rumo à Farda Premium</h1>
-          <p className="page-intro">
-            Entre ou crie sua conta para contratar a assinatura e acompanhar
-            seu acesso Premium.
-          </p>
-          <p className="auth-links">
-            <Link href="/login" className="primary-button">
-              ENTRAR →
-            </Link>{" "}
-            <Link href="/cadastro" className="secondary-button">
-              CRIAR CONTA
+      <main className="subscription-page">
+        <style jsx global>{styles}</style>
+        <div className="subscription-shell">
+          <header className="subscription-topline">
+            <div className="subscription-brand">
+              <span className="subscription-brand-mark">RF</span>
+              RUMO À FARDA
+            </div>
+            <Link className="subscription-back" href="/">
+              Voltar ao início
             </Link>
-          </p>
-          <p className="auth-links">
-            <Link href="/">Voltar ao início</Link>
-          </p>
-        </section>
+          </header>
+
+          <section className="subscription-card">
+            <span className="subscription-eyebrow">ÁREA PREMIUM</span>
+            <h1 className="subscription-title">
+              Sua preparação começa aqui.
+            </h1>
+            <p className="subscription-subtitle">
+              Entre ou crie sua conta para contratar a assinatura e acompanhar
+              seu acesso Premium.
+            </p>
+
+            <div className="subscription-plan subscription-card">
+              <h2 className="subscription-plan-name">
+                Rumo à Farda Premium
+              </h2>
+              <div className="subscription-price">
+                <span className="subscription-price-value">
+                  R$ 19,90
+                </span>
+                <span className="subscription-price-period">/ mês</span>
+              </div>
+            </div>
+
+            <div className="subscription-status-actions">
+              <Link className="subscription-primary-button" href="/login">
+                ENTRAR NA MINHA CONTA
+              </Link>
+              <Link className="subscription-secondary-button" href="/cadastro">
+                CRIAR CONTA
+              </Link>
+            </div>
+          </section>
+        </div>
       </main>
     );
   }
@@ -362,77 +993,126 @@ function AssinaturaContent() {
   const canCancel = status === "active" || status === "pending";
 
   return (
-    <main className="auth-page">
-      <section className="auth-card">
-        <span className="eyebrow">SUA CONTA</span>
-        <h1>Rumo à Farda Premium</h1>
-        <p className="page-intro">
-          Logado como <strong>{user.email}</strong>
-        </p>
+    <main className="subscription-page">
+      <style jsx global>{styles}</style>
+
+      <div className="subscription-shell">
+        <header className="subscription-topline">
+          <div className="subscription-brand">
+            <span className="subscription-brand-mark">RF</span>
+            RUMO À FARDA
+          </div>
+          <Link className="subscription-back" href="/">
+            ← Voltar ao app
+          </Link>
+        </header>
+
+        <section className="subscription-hero">
+          <span className="subscription-eyebrow">SUA CONTA</span>
+          <h1 className="subscription-title">Rumo à Farda Premium</h1>
+          <p className="subscription-subtitle">
+            Gerencie sua assinatura com segurança e acompanhe o status do
+            seu acesso em um só lugar.
+          </p>
+        </section>
 
         {notice && (
-          <p className="auth-success" role="status">
+          <div
+            className="subscription-alert subscription-alert-success"
+            role="status"
+          >
             {notice}
-          </p>
+          </div>
         )}
 
-        <article className="feature-card" style={{ marginTop: "1rem" }}>
-          <h2>Plano mensal</h2>
-          <p>
-            <strong>R$ 19,90 por mês</strong>
-          </p>
-          <p>
-            Cobrança recorrente mensal, sem prazo predeterminado, conforme
-            as condições apresentadas pelo Mercado Pago antes da contratação.
-          </p>
-        </article>
+        <section className="subscription-card subscription-plan">
+          <div className="subscription-plan-top">
+            <div>
+              <h2 className="subscription-plan-name">
+                Plano mensal Premium
+              </h2>
+              <p className="subscription-plan-description">
+                Para manter sua preparação para Soldado PMERJ em dia.
+              </p>
+            </div>
+            <span className="subscription-plan-badge">PREMIUM</span>
+          </div>
 
-        <article className="feature-card" style={{ marginTop: "1rem" }}>
-          <h2>Status da assinatura</h2>
-          <p>
-            <strong>Estado:</strong> {status}
+          <div className="subscription-price">
+            <span className="subscription-price-value">R$ 19,90</span>
+            <span className="subscription-price-period">por mês</span>
+          </div>
+
+          <p className="subscription-plan-note">
+            Cobrança recorrente mensal, sem prazo predeterminado. Confira
+            todas as condições apresentadas pelo Mercado Pago antes de
+            autorizar a contratação.
           </p>
-          <p>
-            <strong>Acesso Premium:</strong>{" "}
-            {hasAccess ? "Liberado" : "Bloqueado"}
-          </p>
+        </section>
+
+        <section className="subscription-card">
+          <div className="subscription-section-heading">
+            <span className="subscription-step">01</span>
+            <div>
+              <h2 className="subscription-section-title">
+                Status da assinatura
+              </h2>
+              <p className="subscription-section-description">
+                A situação atual do seu plano e do acesso Premium.
+              </p>
+            </div>
+          </div>
+
+          <div className="subscription-status-row">
+            <span className="subscription-status-label">
+              Estado da assinatura
+            </span>
+            <span
+              className={`subscription-status-pill ${
+                hasAccess ? "subscription-status-pill-active" : ""
+              }`}
+            >
+              {status}
+            </span>
+          </div>
+
+          <div className="subscription-status-row">
+            <span className="subscription-status-label">Acesso Premium</span>
+            <span className="subscription-status-value">
+              {hasAccess ? "Liberado" : "Bloqueado"}
+            </span>
+          </div>
 
           {subscription?.currentPeriodEnd && (
-            <p>
-              <strong>Válido até:</strong>{" "}
-              {new Date(
-                subscription.currentPeriodEnd
-              ).toLocaleString("pt-BR")}
+            <div className="subscription-status-row">
+              <span className="subscription-status-label">Válido até</span>
+              <span className="subscription-status-value">
+                {new Date(
+                  subscription.currentPeriodEnd
+                ).toLocaleString("pt-BR")}
+              </span>
+            </div>
+          )}
+
+          {subscription?.message && (
+            <p className="subscription-plan-note">
+              {subscription.message}
             </p>
           )}
 
-          {subscription?.message && <p>{subscription.message}</p>}
+          <div className="subscription-status-actions">
+            <button
+              className="subscription-secondary-button"
+              type="button"
+              disabled={cancelLoading || checkoutLoading}
+              onClick={() => void refreshSubscription()}
+            >
+              ATUALIZAR STATUS
+            </button>
 
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={cancelLoading || checkoutLoading}
-            onClick={() => void refreshSubscription()}
-          >
-            ATUALIZAR STATUS
-          </button>
-
-          {canCancel && (
-            <div style={{ marginTop: "1rem" }}>
-              <p>
-                Você pode solicitar o cancelamento da assinatura por aqui.
-                Aguarde a confirmação do Mercado Pago para verificar a
-                atualização do status e do acesso.
-              </p>
-
-              {cancelError && (
-                <p className="auth-error" role="alert">
-                  {cancelError}
-                </p>
-              )}
-
+            {canCancel && (
               <button
-                className="secondary-button"
+                className="subscription-secondary-button"
                 type="button"
                 disabled={cancelLoading || checkoutLoading}
                 onClick={() => void cancelSubscription()}
@@ -441,34 +1121,73 @@ function AssinaturaContent() {
                   ? "PROCESSANDO CANCELAMENTO..."
                   : "CANCELAR ASSINATURA"}
               </button>
+            )}
+          </div>
+
+          {cancelError && (
+            <div
+              className="subscription-alert subscription-alert-error"
+              role="alert"
+              style={{ marginTop: 16, marginBottom: 0 }}
+            >
+              {cancelError}
             </div>
           )}
-        </article>
+
+          {canCancel && (
+            <p className="subscription-plan-note">
+              O cancelamento será confirmado após a consulta ao Mercado Pago.
+              Atualize o status para conferir a situação final.
+            </p>
+          )}
+        </section>
 
         {!hasAccess && (
-          <article className="feature-card" style={{ marginTop: "1rem" }}>
-            <h2>Contratar Premium</h2>
-            <p>
-              Preencha os dados do cartão para autorizar a cobrança recorrente
-              de R$ 19,90 por mês. O acesso Premium só será liberado após a
-              confirmação necessária pelo servidor.
-            </p>
+          <section className="subscription-card">
+            <div className="subscription-section-heading">
+              <span className="subscription-step">02</span>
+              <div>
+                <h2 className="subscription-section-title">
+                  Dados para pagamento
+                </h2>
+                <p className="subscription-section-description">
+                  Preencha os dados solicitados para autorizar a cobrança
+                  recorrente mensal.
+                </p>
+              </div>
+            </div>
+
+            <div className="subscription-account">
+              <span className="subscription-account-icon">✉</span>
+              <div style={{ minWidth: 0 }}>
+                <p className="subscription-account-label">
+                  Conta vinculada à assinatura
+                </p>
+                <p className="subscription-account-email">{user.email}</p>
+              </div>
+            </div>
 
             {!publicKey && (
-              <p className="auth-error" role="alert">
+              <div
+                className="subscription-alert subscription-alert-error"
+                role="alert"
+              >
                 A configuração pública do Mercado Pago não está disponível.
                 Entre em contato com o suporte.
-              </p>
+              </div>
             )}
 
             {checkoutError && (
-              <p className="auth-error" role="alert">
+              <div
+                className="subscription-alert subscription-alert-error"
+                role="alert"
+              >
                 {checkoutError}
-              </p>
+              </div>
             )}
 
-            <form id="form-checkout" className="subscription-card-form">
-              <div>
+            <form id="form-checkout" className="subscription-form">
+              <div className="subscription-field subscription-field-wide">
                 <label htmlFor="form-checkout__cardholderName">
                   Nome impresso no cartão
                 </label>
@@ -481,7 +1200,7 @@ function AssinaturaContent() {
                 />
               </div>
 
-              <div>
+              <div className="subscription-field subscription-field-wide">
                 <label htmlFor="form-checkout__cardholderEmail">
                   E-mail do titular
                 </label>
@@ -490,11 +1209,18 @@ function AssinaturaContent() {
                   type="email"
                   autoComplete="email"
                   defaultValue={user.email ?? ""}
+                  placeholder="E-mail do titular"
                   required
                 />
               </div>
 
-              <div>
+              <div className="subscription-form-divider" />
+
+              <p className="subscription-form-subheading">
+                DADOS DO CARTÃO
+              </p>
+
+              <div className="subscription-field subscription-field-wide">
                 <label htmlFor="form-checkout__cardNumber">
                   Número do cartão
                 </label>
@@ -508,9 +1234,9 @@ function AssinaturaContent() {
                 />
               </div>
 
-              <div>
+              <div className="subscription-field">
                 <label htmlFor="form-checkout__expirationDate">
-                  Validade (MM/AA)
+                  Validade
                 </label>
                 <input
                   id="form-checkout__expirationDate"
@@ -521,7 +1247,7 @@ function AssinaturaContent() {
                 />
               </div>
 
-              <div>
+              <div className="subscription-field">
                 <label htmlFor="form-checkout__securityCode">
                   Código de segurança
                 </label>
@@ -535,7 +1261,13 @@ function AssinaturaContent() {
                 />
               </div>
 
-              <div>
+              <div className="subscription-form-divider" />
+
+              <p className="subscription-form-subheading">
+                DADOS DO TITULAR
+              </p>
+
+              <div className="subscription-field">
                 <label htmlFor="form-checkout__identificationType">
                   Tipo de documento
                 </label>
@@ -550,7 +1282,7 @@ function AssinaturaContent() {
                 </select>
               </div>
 
-              <div>
+              <div className="subscription-field">
                 <label htmlFor="form-checkout__identificationNumber">
                   Número do documento
                 </label>
@@ -558,12 +1290,12 @@ function AssinaturaContent() {
                   id="form-checkout__identificationNumber"
                   type="text"
                   inputMode="numeric"
-                  placeholder="CPF ou documento solicitado"
+                  placeholder="CPF ou documento"
                   required
                 />
               </div>
 
-              <div>
+              <div className="subscription-field">
                 <label htmlFor="form-checkout__issuer">
                   Banco emissor
                 </label>
@@ -572,7 +1304,7 @@ function AssinaturaContent() {
                 </select>
               </div>
 
-              <div>
+              <div className="subscription-field">
                 <label htmlFor="form-checkout__installments">
                   Parcelas
                 </label>
@@ -582,7 +1314,7 @@ function AssinaturaContent() {
               </div>
 
               <button
-                className="primary-button"
+                className="subscription-primary-button subscription-submit"
                 type="submit"
                 disabled={
                   !publicKey ||
@@ -594,31 +1326,33 @@ function AssinaturaContent() {
                 {checkoutLoading
                   ? "PROCESSANDO..."
                   : cardFormReady
-                    ? "AUTORIZAR ASSINATURA — R$ 19,90/MÊS"
+                    ? "AUTORIZAR ASSINATURA · R$ 19,90/MÊS"
                     : "CARREGANDO FORMULÁRIO..."}
               </button>
 
-              <p>
-                Os dados do cartão são tratados pelo formulário do Mercado
-                Pago. O aplicativo não armazena o número completo nem o código
-                de segurança do cartão.
+              <p className="subscription-secure-note">
+                <span>✓</span>
+                <span>
+                  Os dados do cartão são tratados pelo formulário do
+                  Mercado Pago. O aplicativo não armazena o número completo
+                  nem o código de segurança do cartão. O acesso Premium
+                  depende da confirmação necessária pelo servidor.
+                </span>
               </p>
             </form>
-          </article>
+          </section>
         )}
 
-        <p className="auth-links" style={{ marginTop: "1.5rem" }}>
-          <Link href="/">Voltar ao app</Link>
-          {" · "}
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => void signOut()}
-          >
-            Sair
-          </button>
-        </p>
-      </section>
+        <footer className="subscription-footer">
+          <span>Rumo à Farda · Soldado PMERJ</span>
+          <div className="subscription-footer-links">
+            <Link href="/">Voltar ao app</Link>
+            <button type="button" onClick={() => void signOut()}>
+              Sair da conta
+            </button>
+          </div>
+        </footer>
+      </div>
     </main>
   );
 }
@@ -627,10 +1361,12 @@ export default function AssinaturaPage() {
   return (
     <Suspense
       fallback={
-        <main className="auth-page">
-          <section className="auth-card">
-            <p>Carregando...</p>
-          </section>
+        <main className="subscription-page">
+          <div className="subscription-shell">
+            <section className="subscription-card">
+              Carregando...
+            </section>
+          </div>
         </main>
       }
     >
