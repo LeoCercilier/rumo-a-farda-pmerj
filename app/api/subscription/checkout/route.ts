@@ -172,6 +172,94 @@ async function readAttempt(
   };
 }
 
+/**
+ * Diagnóstico restrito da resposta de erro do Mercado Pago.
+ * Nunca registra o corpo completo nem dados da requisição.
+ */
+function sanitizeDiagnosticText(
+  value: unknown,
+  maxLength: number
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+
+  const sanitized = value
+    .replace(/Bearer\s+\S+/gi, "[REDACTED]")
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
+    .replace(/https?:\/\/\S+/gi, "[URL]")
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi,
+      "[ID]"
+    )
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, maxLength);
+
+  return sanitized || undefined;
+}
+
+async function getMercadoPagoErrorDiagnostic(
+  response: Response
+): Promise<{
+  httpStatus: number;
+  error?: string;
+  message?: string;
+  causeCodes?: Array<string | number>;
+}> {
+  const diagnostic: {
+    httpStatus: number;
+    error?: string;
+    message?: string;
+    causeCodes?: Array<string | number>;
+  } = {
+    httpStatus: response.status,
+  };
+
+  try {
+    const body: unknown = await response.json();
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return diagnostic;
+    }
+
+    const data = body as Record<string, unknown>;
+
+    const error = sanitizeDiagnosticText(data.error, 100);
+    const message = sanitizeDiagnosticText(data.message, 200);
+
+    if (error) diagnostic.error = error;
+    if (message) diagnostic.message = message;
+
+    if (Array.isArray(data.cause)) {
+      const codes: Array<string | number> = [];
+
+      for (const item of data.cause.slice(0, 5)) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          continue;
+        }
+
+        const code = (item as Record<string, unknown>).code;
+
+        if (typeof code === "number" && Number.isFinite(code)) {
+          codes.push(code);
+        } else if (
+          typeof code === "string" &&
+          /^[A-Za-z0-9_.-]{1,60}$/.test(code)
+        ) {
+          codes.push(code);
+        }
+      }
+
+      if (codes.length > 0) {
+        diagnostic.causeCodes = codes;
+      }
+    }
+  } catch {
+    // Corpo ausente, não JSON ou ilegível:
+    // manter apenas o status HTTP.
+  }
+
+  return diagnostic;
+}
+
 export async function POST() {
   try {
     // Não habilitar cobranças sem autorização expressa.
@@ -256,8 +344,8 @@ export async function POST() {
     if (read.attempt) {
       attempt = read.attempt;
     } else {
-      // Não iniciar um novo identificador de cobrança quando já
-      // existe uma assinatura antiga que ainda exige reconciliação.
+      // Não iniciar outro identificador de cobrança quando existe
+      // uma assinatura antiga que ainda exige reconciliação.
       if (subscription?.mp_preapproval_id) {
         return errorResponse(
           "subscription_reconciliation_required",
@@ -286,7 +374,7 @@ export async function POST() {
         .maybeSingle();
 
       if (insertError || !inserted) {
-        // Outra requisição pode ter reservado a tentativa no intervalo.
+        // Outra requisição pode ter reservado a tentativa nesse intervalo.
         const reread = await readAttempt(admin, user.id);
 
         if (reread.failed || !reread.attempt) {
@@ -419,11 +507,14 @@ export async function POST() {
     );
 
     if (!mpResponse.ok) {
-      // Não gerar outra chave automaticamente. Após expirar a reserva,
-      // uma recuperação poderá reutilizar a mesma chave e referência.
-      console.error("[checkout] Resultado não confirmado pelo Mercado Pago.", {
-        httpStatus: mpResponse.status,
-      });
+      // A resposta pode indicar falha, mas o resultado da tentativa
+      // continua sujeito à reconciliação. Não criar outra chave.
+      const diagnostic = await getMercadoPagoErrorDiagnostic(mpResponse);
+
+      console.error(
+        "[checkout] Resultado não confirmado pelo Mercado Pago.",
+        diagnostic
+      );
 
       return errorResponse(
         "mercadopago_result_uncertain",
