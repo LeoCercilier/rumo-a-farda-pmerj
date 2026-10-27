@@ -20,6 +20,10 @@ function errorResponse(
   return NextResponse.json({ error, message }, { status });
 }
 
+function isCancelled(status: string) {
+  return status === "cancelled" || status === "canceled";
+}
+
 export async function POST(request: Request) {
   try {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
@@ -34,7 +38,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Proteção adicional contra solicitações originadas de outros sites.
+    // Bloqueia origens externas quando o navegador envia o cabeçalho Origin.
     const origin = request.headers.get("origin");
 
     if (origin) {
@@ -73,9 +77,7 @@ export async function POST(request: Request) {
 
     const { data: subscription, error: dbError } = await admin
       .from("subscriptions")
-      .select(
-        "status, mp_preapproval_id, plan_id, current_period_end"
-      )
+      .select("status, mp_preapproval_id, plan_id, current_period_end")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -108,7 +110,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Consultar o registro real antes de solicitar qualquer alteração.
+    // Consulta a assinatura remota antes de solicitar qualquer alteração.
     const lookupResponse = await fetch(
       `https://api.mercadopago.com/preapproval/${encodeURIComponent(preapprovalId)}`,
       {
@@ -128,9 +130,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const remote = (
-      await lookupResponse.json()
-    ) as MercadoPagoSubscription;
+    const remote =
+      (await lookupResponse.json()) as MercadoPagoSubscription;
 
     const referencePattern =
       /^user:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -152,12 +153,12 @@ export async function POST(request: Request) {
 
     const remoteStatus = (remote.status ?? "").toLowerCase();
 
-    if (remoteStatus === "cancelled" || remoteStatus === "canceled") {
+    if (isCancelled(remoteStatus)) {
       return NextResponse.json({
         success: true,
         alreadyCancelled: true,
         message:
-          "A assinatura já está cancelada. O status do aplicativo será atualizado pela confirmação do Mercado Pago.",
+          "O Mercado Pago informa que a assinatura já está cancelada. Atualize o status do aplicativo para verificar a sincronização.",
       });
     }
 
@@ -177,16 +178,17 @@ export async function POST(request: Request) {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ status: "canceled" }),
+        body: JSON.stringify({ status: "cancelled" }),
         cache: "no-store",
         signal: AbortSignal.timeout(15000),
       }
     );
 
     if (!cancelResponse.ok) {
-      console.error("[subscription/cancel] Mercado Pago recusou o cancelamento.", {
-        httpStatus: cancelResponse.status,
-      });
+      console.error(
+        "[subscription/cancel] Mercado Pago recusou o cancelamento.",
+        { httpStatus: cancelResponse.status }
+      );
 
       return errorResponse(
         "mercadopago_cancel_failed",
@@ -195,15 +197,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = (
-      await cancelResponse.json()
-    ) as MercadoPagoSubscription;
+    const result =
+      (await cancelResponse.json()) as MercadoPagoSubscription;
 
     const resultStatus = (result.status ?? "").toLowerCase();
 
     if (
       String(result.id) !== preapprovalId ||
-      (resultStatus !== "cancelled" && resultStatus !== "canceled")
+      !isCancelled(resultStatus)
     ) {
       return errorResponse(
         "cancel_confirmation_uncertain",
@@ -212,8 +213,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Não alterar a tabela aqui: o webhook existente continua responsável
-    // por registrar o status confirmado pelo Mercado Pago.
+    // O webhook continua sendo responsável por sincronizar o banco.
     return NextResponse.json({
       success: true,
       message:
