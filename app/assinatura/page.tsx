@@ -61,12 +61,19 @@ declare global {
 
 const styles = `
   .subscription-page {
+    box-sizing: border-box;
     min-height: 100vh;
     padding: 32px 16px 48px;
     color: #f1f5f9;
     background:
       radial-gradient(ellipse at 50% 0%, rgba(22, 101, 52, .18), transparent 55%),
       #080d16;
+  }
+
+  .subscription-page *,
+  .subscription-page *::before,
+  .subscription-page *::after {
+    box-sizing: border-box;
   }
 
   .subscription-shell {
@@ -454,20 +461,46 @@ const styles = `
     font-size: 13px;
   }
 
+  /* Aviso de segurança corrigido: conteúdo contido e quebra de linha. */
   .subscription-secure-note {
-    display: flex;
-    align-items: flex-start;
-    gap: 9px;
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     grid-column: 1 / -1;
-    margin: -4px 0 0;
+    margin: 0;
+    padding: 12px 13px;
+    border: 1px solid #263447;
+    border-radius: 10px;
     color: #94a3b8;
+    background: #0b1220;
     font-size: 11px;
     line-height: 1.7;
+    overflow-wrap: anywhere;
+    word-break: normal;
   }
 
   .subscription-secure-note span {
-    flex-shrink: 0;
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .subscription-secure-note span:first-child {
     color: #86efac;
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.5;
+    text-align: center;
+  }
+
+  .subscription-secure-note span:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .subscription-alert {
@@ -1330,15 +1363,15 @@ function AssinaturaContent() {
                     : "CARREGANDO FORMULÁRIO..."}
               </button>
 
-              <p className="subscription-secure-note">
-                <span>✓</span>
+              <div className="subscription-secure-note" role="note">
+                <span aria-hidden="true">✓</span>
                 <span>
                   Os dados do cartão são tratados pelo formulário do
                   Mercado Pago. O aplicativo não armazena o número completo
                   nem o código de segurança do cartão. O acesso Premium
                   depende da confirmação necessária pelo servidor.
                 </span>
-              </p>
+              </div>
             </form>
           </section>
         )}
