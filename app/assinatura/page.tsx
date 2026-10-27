@@ -3,8 +3,61 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useAuth } from "@/components/AuthProvider";
+
+type CardFormData = {
+  token?: string;
+};
+
+type MercadoPagoCardForm = {
+  getCardFormData: () => CardFormData;
+};
+
+type CardField = { id: string };
+
+type MercadoPagoCardFormConfig = {
+  amount: string;
+  iframe: boolean;
+  form: {
+    id: string;
+    cardholderName: CardField;
+    cardholderEmail: CardField;
+    cardNumber: CardField;
+    expirationDate: CardField;
+    securityCode: CardField;
+    issuer: CardField;
+    installments: CardField;
+    identificationType: CardField;
+    identificationNumber: CardField;
+  };
+  callbacks: {
+    onFormMounted: (error?: unknown) => void;
+    onSubmit: (event: Event) => void;
+    onFetching: (resource: string) => () => void;
+  };
+};
+
+type MercadoPagoInstance = {
+  cardForm: (
+    config: MercadoPagoCardFormConfig
+  ) => MercadoPagoCardForm;
+};
+
+declare global {
+  interface Window {
+    MercadoPago?: new (
+      publicKey: string,
+      options?: { locale?: string }
+    ) => MercadoPagoInstance;
+  }
+}
 
 function AssinaturaContent() {
   const { user, loading, subscription, refreshSubscription, signOut } =
@@ -17,53 +70,217 @@ function AssinaturaContent() {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [cardFormReady, setCardFormReady] = useState(false);
+
+  const cardFormRef = useRef<MercadoPagoCardForm | null>(null);
+  const publicKey = process.env.NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY;
+
+  const submitCard = useCallback(
+    async (event: Event) => {
+      event.preventDefault();
+      setCheckoutError(null);
+      setNotice(null);
+
+      const cardForm = cardFormRef.current;
+
+      if (!cardForm) {
+        setCheckoutError(
+          "O formulário ainda está carregando. Aguarde e tente novamente."
+        );
+        return;
+      }
+
+      setCheckoutLoading(true);
+
+      try {
+        const cardData = cardForm.getCardFormData();
+
+        if (!cardData.token) {
+          setCheckoutError(
+            "Não foi possível validar o cartão. Confira os dados e tente novamente."
+          );
+          return;
+        }
+
+        const res = await fetch("/api/subscription/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            card_token_id: cardData.token,
+          }),
+        });
+
+        const data = (await res.json()) as {
+          checkoutUrl?: string;
+          subscriptionCreated?: boolean;
+          message?: string;
+        };
+
+        if (!res.ok) {
+          setCheckoutError(
+            data.message || "Não foi possível iniciar a assinatura."
+          );
+          return;
+        }
+
+        if (data.checkoutUrl) {
+          window.location.href = data.checkoutUrl;
+          return;
+        }
+
+        if (data.subscriptionCreated) {
+          setNotice(
+            data.message ||
+              "Solicitação registrada. Aguardando confirmação do Mercado Pago."
+          );
+          await refreshSubscription();
+          return;
+        }
+
+        setCheckoutError(
+          "O servidor não confirmou a criação da assinatura. Atualize o status antes de tentar novamente."
+        );
+      } catch {
+        setCheckoutError(
+          "Não foi possível concluir a solicitação. Atualize o status antes de tentar novamente."
+        );
+      } finally {
+        setCheckoutLoading(false);
+      }
+    },
+    [refreshSubscription]
+  );
 
   useEffect(() => {
     if (retorno === "ok") {
       setNotice(
-        "Retorno do checkout recebido. A liberação do acesso depende da confirmação do pagamento pelo Mercado Pago. Atualize o status abaixo."
+        "Retorno do Mercado Pago recebido. O acesso Premium depende da confirmação do pagamento pelo servidor."
       );
       void refreshSubscription();
     }
   }, [retorno, refreshSubscription]);
 
-  async function startCheckout() {
-    setCheckoutError(null);
-    setCheckoutLoading(true);
+  useEffect(() => {
+    if (!user || !publicKey || cardFormRef.current) return;
 
-    try {
-      const res = await fetch("/api/subscription/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({}),
-      });
+    let cancelled = false;
 
-      const data = await res.json();
+    const initializeCardForm = () => {
+      if (cancelled || !window.MercadoPago || cardFormRef.current) {
+        return;
+      }
 
-      if (!res.ok) {
+      try {
+        const mp = new window.MercadoPago(publicKey, {
+          locale: "pt-BR",
+        });
+
+        cardFormRef.current = mp.cardForm({
+          amount: "19.90",
+          iframe: true,
+          form: {
+            id: "form-checkout",
+            cardholderName: {
+              id: "form-checkout__cardholderName",
+            },
+            cardholderEmail: {
+              id: "form-checkout__cardholderEmail",
+            },
+            cardNumber: {
+              id: "form-checkout__cardNumber",
+            },
+            expirationDate: {
+              id: "form-checkout__expirationDate",
+            },
+            securityCode: {
+              id: "form-checkout__securityCode",
+            },
+            issuer: {
+              id: "form-checkout__issuer",
+            },
+            installments: {
+              id: "form-checkout__installments",
+            },
+            identificationType: {
+              id: "form-checkout__identificationType",
+            },
+            identificationNumber: {
+              id: "form-checkout__identificationNumber",
+            },
+          },
+          callbacks: {
+            onFormMounted: (error?: unknown) => {
+              if (error) {
+                console.error(
+                  "[assinatura] Falha ao montar formulário."
+                );
+                setCheckoutError(
+                  "Não foi possível carregar os campos do cartão. Recarregue a página."
+                );
+                return;
+              }
+
+              setCardFormReady(true);
+            },
+            onSubmit: (event: Event) => {
+              void submitCard(event);
+            },
+            onFetching: (_resource: string) => {
+              return () => undefined;
+            },
+          },
+        });
+      } catch {
         setCheckoutError(
-          data.message || "Não foi possível iniciar a assinatura."
+          "Não foi possível inicializar o formulário de pagamento. Recarregue a página."
         );
-        return;
+      }
+    };
+
+    if (window.MercadoPago) {
+      initializeCardForm();
+    } else {
+      const scriptUrl = "https://sdk.mercadopago.com/js/v2";
+      let script = document.querySelector<HTMLScriptElement>(
+        'script[src="https://sdk.mercadopago.com/js/v2"]'
+      );
+
+      if (!script) {
+        script = document.createElement("script");
+        script.src = scriptUrl;
+        script.async = true;
+        document.head.appendChild(script);
       }
 
-      if (data.checkoutUrl) {
-        window.location.href = data.checkoutUrl;
-        return;
-      }
+      const handleLoad = () => initializeCardForm();
 
-      setCheckoutError("URL de checkout não disponível.");
-    } catch {
-      setCheckoutError("Falha de comunicação com o servidor.");
-    } finally {
-      setCheckoutLoading(false);
+      const handleError = () => {
+        if (!cancelled) {
+          setCheckoutError(
+            "Não foi possível carregar o serviço de pagamentos. Verifique sua conexão e recarregue a página."
+          );
+        }
+      };
+
+      script.addEventListener("load", handleLoad);
+      script.addEventListener("error", handleError);
+
+      return () => {
+        cancelled = true;
+        script?.removeEventListener("load", handleLoad);
+        script?.removeEventListener("error", handleError);
+      };
     }
-  }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, publicKey, submitCard]);
 
   async function cancelSubscription() {
     const confirmed = window.confirm(
-      "Deseja realmente cancelar sua assinatura Premium? O Mercado Pago será consultado para confirmar o cancelamento. A atualização do acesso no aplicativo depende da confirmação recebida pelo servidor."
+      "Deseja realmente cancelar sua assinatura Premium? O Mercado Pago será consultado para confirmar o cancelamento."
     );
 
     if (!confirmed) return;
@@ -91,13 +308,13 @@ function AssinaturaContent() {
 
       setNotice(
         data.message ||
-          "Solicitação processada. Atualize o status para conferir a situação da assinatura."
+          "Solicitação processada. Atualize o status para conferir a assinatura."
       );
 
       await refreshSubscription();
     } catch {
       setCancelError(
-        "Falha de comunicação. Confira o status da assinatura antes de tentar novamente."
+        "Falha de comunicação. Confira o status antes de tentar novamente."
       );
     } finally {
       setCancelLoading(false);
@@ -121,8 +338,8 @@ function AssinaturaContent() {
           <span className="eyebrow">ASSINATURA</span>
           <h1>Rumo à Farda Premium</h1>
           <p className="page-intro">
-            Entre ou crie sua conta para acompanhar sua assinatura e acessar os
-            recursos Premium quando a contratação estiver disponível.
+            Entre ou crie sua conta para contratar a assinatura e acompanhar
+            seu acesso Premium.
           </p>
           <p className="auth-links">
             <Link href="/login" className="primary-button">
@@ -165,13 +382,8 @@ function AssinaturaContent() {
             <strong>R$ 19,90 por mês</strong>
           </p>
           <p>
-            Cobrança recorrente mensal, com duração indeterminada, conforme as
-            condições apresentadas pelo Mercado Pago antes da confirmação da
-            contratação.
-          </p>
-          <p>
-            A contratação ainda depende da conclusão dos testes e da autorização
-            para habilitar as cobranças.
+            Cobrança recorrente mensal, sem prazo predeterminado, conforme
+            as condições apresentadas pelo Mercado Pago antes da contratação.
           </p>
         </article>
 
@@ -188,7 +400,9 @@ function AssinaturaContent() {
           {subscription?.currentPeriodEnd && (
             <p>
               <strong>Válido até:</strong>{" "}
-              {new Date(subscription.currentPeriodEnd).toLocaleString("pt-BR")}
+              {new Date(
+                subscription.currentPeriodEnd
+              ).toLocaleString("pt-BR")}
             </p>
           )}
 
@@ -233,12 +447,19 @@ function AssinaturaContent() {
 
         {!hasAccess && (
           <article className="feature-card" style={{ marginTop: "1rem" }}>
-            <h2>Contratação</h2>
+            <h2>Contratar Premium</h2>
             <p>
-              O acesso Premium só será liberado após a confirmação da assinatura
-              pelo servidor. O retorno do checkout, por si só, não comprova
-              pagamento.
+              Preencha os dados do cartão para autorizar a cobrança recorrente
+              de R$ 19,90 por mês. O acesso Premium só será liberado após a
+              confirmação necessária pelo servidor.
             </p>
+
+            {!publicKey && (
+              <p className="auth-error" role="alert">
+                A configuração pública do Mercado Pago não está disponível.
+                Entre em contato com o suporte.
+              </p>
+            )}
 
             {checkoutError && (
               <p className="auth-error" role="alert">
@@ -246,16 +467,143 @@ function AssinaturaContent() {
               </p>
             )}
 
-            <button
-              className="primary-button"
-              type="button"
-              disabled={checkoutLoading || cancelLoading}
-              onClick={() => void startCheckout()}
-            >
-              {checkoutLoading
-                ? "VERIFICANDO DISPONIBILIDADE..."
-                : "VERIFICAR DISPONIBILIDADE"}
-            </button>
+            <form id="form-checkout" className="subscription-card-form">
+              <div>
+                <label htmlFor="form-checkout__cardholderName">
+                  Nome impresso no cartão
+                </label>
+                <input
+                  id="form-checkout__cardholderName"
+                  type="text"
+                  autoComplete="cc-name"
+                  placeholder="Nome como aparece no cartão"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="form-checkout__cardholderEmail">
+                  E-mail do titular
+                </label>
+                <input
+                  id="form-checkout__cardholderEmail"
+                  type="email"
+                  autoComplete="email"
+                  defaultValue={user.email ?? ""}
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="form-checkout__cardNumber">
+                  Número do cartão
+                </label>
+                <input
+                  id="form-checkout__cardNumber"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="cc-number"
+                  placeholder="Número do cartão"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="form-checkout__expirationDate">
+                  Validade (MM/AA)
+                </label>
+                <input
+                  id="form-checkout__expirationDate"
+                  type="text"
+                  autoComplete="cc-exp"
+                  placeholder="MM/AA"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="form-checkout__securityCode">
+                  Código de segurança
+                </label>
+                <input
+                  id="form-checkout__securityCode"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="cc-csc"
+                  placeholder="CVV"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="form-checkout__identificationType">
+                  Tipo de documento
+                </label>
+                <select
+                  id="form-checkout__identificationType"
+                  required
+                  defaultValue=""
+                >
+                  <option value="" disabled>
+                    Selecione
+                  </option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="form-checkout__identificationNumber">
+                  Número do documento
+                </label>
+                <input
+                  id="form-checkout__identificationNumber"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="CPF ou documento solicitado"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="form-checkout__issuer">
+                  Banco emissor
+                </label>
+                <select id="form-checkout__issuer" defaultValue="">
+                  <option value="">Selecione, se solicitado</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="form-checkout__installments">
+                  Parcelas
+                </label>
+                <select id="form-checkout__installments" defaultValue="">
+                  <option value="">Selecione, se solicitado</option>
+                </select>
+              </div>
+
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={
+                  !publicKey ||
+                  !cardFormReady ||
+                  checkoutLoading ||
+                  cancelLoading
+                }
+              >
+                {checkoutLoading
+                  ? "PROCESSANDO..."
+                  : cardFormReady
+                    ? "AUTORIZAR ASSINATURA — R$ 19,90/MÊS"
+                    : "CARREGANDO FORMULÁRIO..."}
+              </button>
+
+              <p>
+                Os dados do cartão são tratados pelo formulário do Mercado
+                Pago. O aplicativo não armazena o número completo nem o código
+                de segurança do cartão.
+              </p>
+            </form>
           </article>
         )}
 
