@@ -1,3 +1,4 @@
+
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -405,9 +406,12 @@ export async function POST(request: Request) {
     }
 
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+    const planId = process.env.MERCADOPAGO_PLAN_ID?.trim();
     const appUrl = getAppUrl();
 
-    if (!accessToken || !appUrl) {
+    if (!accessToken || !appUrl || !planId) {
+      console.error("[checkout] Configuração de cobrança incompleta.");
+
       return errorResponse(
         "billing_not_configured",
         "A configuração da assinatura ainda não foi concluída.",
@@ -612,8 +616,7 @@ export async function POST(request: Request) {
 
       attempt = claimed as CheckoutAttempt;
 
-      // Consultar primeiro a referência antiga para não duplicar
-      // uma assinatura que já possa existir no Mercado Pago.
+      // Consultar primeiro a referência antiga para evitar duplicidade.
       const reconciliation = await searchByExternalReference(
         attempt.external_reference,
         accessToken
@@ -630,12 +633,15 @@ export async function POST(request: Request) {
       if (reconciliation.kind === "found") {
         const resource = reconciliation.resource;
         const resourcePlan = resource.preapproval_plan_id ?? null;
-        const configuredPlan = process.env.MERCADOPAGO_PLAN_ID;
 
-        if (resourcePlan && resourcePlan !== configuredPlan) {
+        if (resourcePlan !== planId) {
+          console.error(
+            "[checkout] Assinatura encontrada sem vínculo com o plano esperado."
+          );
+
           return errorResponse(
             "checkout_reconciliation_required",
-            "Foi encontrada uma assinatura associada a outro plano. É necessária uma verificação antes de continuar.",
+            "Foi encontrada uma assinatura que não corresponde ao plano Premium configurado. É necessária uma verificação antes de continuar.",
             409
           );
         }
@@ -663,9 +669,8 @@ export async function POST(request: Request) {
             });
       }
 
-      // A API não encontrou recurso para a referência anterior.
-      // Uma nova chave e referência evitam reutilizar a mesma chave
-      // de idempotência com dados diferentes.
+      // Nenhum recurso encontrado para a referência antiga.
+      // Gere uma nova chave e referência para a próxima tentativa.
       const newIdempotencyKey = randomUUID();
       const newExternalReference = `user:${user.id}:${randomUUID()}`;
 
@@ -717,6 +722,7 @@ export async function POST(request: Request) {
           "X-Idempotency-Key": attempt.idempotency_key,
         },
         body: JSON.stringify({
+          preapproval_plan_id: planId,
           reason: PREMIUM_REASON,
           external_reference: attempt.external_reference,
           payer_email: user.email,
@@ -752,15 +758,14 @@ export async function POST(request: Request) {
 
     const resource = (await mpResponse.json()) as MercadoPagoResource;
 
-    if (
-      resource.preapproval_plan_id &&
-      resource.preapproval_plan_id !== process.env.MERCADOPAGO_PLAN_ID
-    ) {
-      console.error("[checkout] Resposta vinculada a plano inesperado.");
+    if (resource.preapproval_plan_id !== planId) {
+      console.error(
+        "[checkout] Resposta sem vínculo confirmado com o plano esperado."
+      );
 
       return errorResponse(
         "invalid_checkout_response",
-        "A resposta do checkout precisa ser reconciliada.",
+        "A resposta do checkout não confirmou o vínculo com o plano Premium. É necessária uma reconciliação.",
         502
       );
     }
