@@ -1348,18 +1348,17 @@ function AssinaturaContent() {
                 <select id="form-checkout__installments" defaultValue="">
                   <option value="">Selecione, se solicitado</option>
                 </select>
-              </div>
-
               <button
-                className="subscription-primary-button subscription-submit"
-                type="submit"
-                disabled={
-                  !publicKey ||
-                  !cardFormReady ||
-                  checkoutLoading ||
-                  cancelLoading
-                }
-              >
+  id="form-checkout__submit"
+  className="subscription-primary-button subscription-submit"
+  type="submit"
+  disabled={
+    !publicKey ||
+    !cardFormReady ||
+    checkoutLoading ||
+    cancelLoading
+  }
+>
                 {checkoutLoading
                   ? "PROCESSANDO..."
                   : cardFormReady
