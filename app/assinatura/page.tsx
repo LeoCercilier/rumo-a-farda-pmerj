@@ -1352,9 +1352,6 @@ function AssinaturaContent() {
                   <option value="">Selecione, se solicitado</option>
                 </select>
               </div>
-                <select id="form-checkout__installments" defaultValue="">
-                  <option value="">Selecione, se solicitado</option>
-                </select>
               <button
   id="form-checkout__submit"
   className="subscription-primary-button subscription-submit"
