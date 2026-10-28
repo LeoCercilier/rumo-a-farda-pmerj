@@ -1341,10 +1341,17 @@ function AssinaturaContent() {
                 </select>
               </div>
 
-              <div className="subscription-field">
+                            <div className="subscription-field">
                 <label htmlFor="form-checkout__installments">
                   Parcelas
                 </label>
+                <select
+                  id="form-checkout__installments"
+                  defaultValue=""
+                >
+                  <option value="">Selecione, se solicitado</option>
+                </select>
+              </div>
                 <select id="form-checkout__installments" defaultValue="">
                   <option value="">Selecione, se solicitado</option>
                 </select>
