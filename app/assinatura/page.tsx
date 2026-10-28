@@ -1219,7 +1219,11 @@ function AssinaturaContent() {
               </div>
             )}
 
-            <form id="form-checkout" className="subscription-form">
+            <form
+  id="form-checkout"
+  className="subscription-form"
+  noValidate
+>
               <div className="subscription-field subscription-field-wide">
                 <label htmlFor="form-checkout__cardholderName">
                   Nome impresso no cartão
