@@ -1,4 +1,4 @@
-
+```tsx
 "use client";
 
 import Link from "next/link";
@@ -354,7 +354,8 @@ const styles = `
   }
 
   .subscription-field input,
-  .subscription-field select {
+  .subscription-field select,
+  .subscription-field .subscription-card-frame {
     box-sizing: border-box;
     width: 100%;
     min-width: 0;
@@ -368,6 +369,19 @@ const styles = `
     font: inherit;
     font-size: 14px;
     transition: border-color .15s ease, box-shadow .15s ease;
+  }
+
+  .subscription-field .subscription-card-frame {
+    display: block;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .subscription-field .subscription-card-frame iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
   }
 
   .subscription-field input::placeholder {
@@ -673,7 +687,8 @@ const styles = `
     }
 
     .subscription-field input,
-    .subscription-field select {
+    .subscription-field select,
+    .subscription-field .subscription-card-frame {
       height: 49px;
       font-size: 16px;
     }
@@ -1220,10 +1235,10 @@ function AssinaturaContent() {
             )}
 
             <form
-  id="form-checkout"
-  className="subscription-form"
-  noValidate
->
+              id="form-checkout"
+              className="subscription-form"
+              noValidate
+            >
               <div className="subscription-field subscription-field-wide">
                 <label htmlFor="form-checkout__cardholderName">
                   Nome impresso no cartão
@@ -1261,13 +1276,10 @@ function AssinaturaContent() {
                 <label htmlFor="form-checkout__cardNumber">
                   Número do cartão
                 </label>
-                <input
+                <div
                   id="form-checkout__cardNumber"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="cc-number"
-                  placeholder="Número do cartão"
-                  required
+                  className="subscription-card-frame"
+                  aria-label="Número do cartão"
                 />
               </div>
 
@@ -1275,12 +1287,10 @@ function AssinaturaContent() {
                 <label htmlFor="form-checkout__expirationDate">
                   Validade
                 </label>
-                <input
+                <div
                   id="form-checkout__expirationDate"
-                  type="text"
-                  autoComplete="cc-exp"
-                  placeholder="MM/AA"
-                  required
+                  className="subscription-card-frame"
+                  aria-label="Validade do cartão"
                 />
               </div>
 
@@ -1288,13 +1298,10 @@ function AssinaturaContent() {
                 <label htmlFor="form-checkout__securityCode">
                   Código de segurança
                 </label>
-                <input
+                <div
                   id="form-checkout__securityCode"
-                  type="password"
-                  inputMode="numeric"
-                  autoComplete="cc-csc"
-                  placeholder="CVV"
-                  required
+                  className="subscription-card-frame"
+                  aria-label="Código de segurança do cartão"
                 />
               </div>
 
@@ -1341,7 +1348,7 @@ function AssinaturaContent() {
                 </select>
               </div>
 
-                            <div className="subscription-field">
+              <div className="subscription-field">
                 <label htmlFor="form-checkout__installments">
                   Parcelas
                 </label>
@@ -1352,17 +1359,18 @@ function AssinaturaContent() {
                   <option value="">Selecione, se solicitado</option>
                 </select>
               </div>
+
               <button
-  id="form-checkout__submit"
-  className="subscription-primary-button subscription-submit"
-  type="submit"
-  disabled={
-    !publicKey ||
-    !cardFormReady ||
-    checkoutLoading ||
-    cancelLoading
-  }
->
+                id="form-checkout__submit"
+                className="subscription-primary-button subscription-submit"
+                type="submit"
+                disabled={
+                  !publicKey ||
+                  !cardFormReady ||
+                  checkoutLoading ||
+                  cancelLoading
+                }
+              >
                 {checkoutLoading
                   ? "PROCESSANDO..."
                   : cardFormReady
@@ -1414,3 +1422,4 @@ export default function AssinaturaPage() {
     </Suspense>
   );
 }
+```
