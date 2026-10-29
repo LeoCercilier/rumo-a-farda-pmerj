@@ -1421,4 +1421,3 @@ export default function AssinaturaPage() {
     </Suspense>
   );
 }
-```
