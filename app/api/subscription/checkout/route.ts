@@ -323,6 +323,10 @@ async function getErrorDiagnostic(response: Response) {
     error?: string;
     message?: string;
     causeCodes?: Array<string | number>;
+    causeDetails?: Array<{
+      code: string | number;
+      description?: string;
+    }>;
   } = { httpStatus: response.status };
 
   try {
@@ -341,25 +345,46 @@ async function getErrorDiagnostic(response: Response) {
 
     if (Array.isArray(data.cause)) {
       const codes: Array<string | number> = [];
+      const details: Array<{
+        code: string | number;
+        description?: string;
+      }> = [];
 
       for (const item of data.cause.slice(0, 5)) {
         if (!item || typeof item !== "object" || Array.isArray(item)) {
           continue;
         }
 
-        const code = (item as Record<string, unknown>).code;
+        const cause = item as Record<string, unknown>;
+        const rawCode = cause.code;
+        let code: string | number | undefined;
 
-        if (typeof code === "number" && Number.isFinite(code)) {
-          codes.push(code);
+        if (typeof rawCode === "number" && Number.isFinite(rawCode)) {
+          code = rawCode;
         } else if (
-          typeof code === "string" &&
-          /^[A-Za-z0-9_.-]{1,60}$/.test(code)
+          typeof rawCode === "string" &&
+          /^[A-Za-z0-9_.-]{1,60}$/.test(rawCode)
         ) {
-          codes.push(code);
+          code = rawCode;
         }
+
+        if (code === undefined) continue;
+
+        codes.push(code);
+
+        const description = sanitizeDiagnosticText(
+          cause.description,
+          240
+        );
+
+        details.push({
+          code,
+          ...(description ? { description } : {}),
+        });
       }
 
       if (codes.length) diagnostic.causeCodes = codes;
+      if (details.length) diagnostic.causeDetails = details;
     }
   } catch {
     // Registrar somente o status HTTP se o corpo não puder ser lido.
@@ -748,6 +773,20 @@ export async function POST(request: Request) {
         "[checkout] Resultado não confirmado pelo Mercado Pago.",
         diagnostic
       );
+
+      const causeCodes = diagnostic.causeCodes ?? [];
+      const cardValidationFailed =
+        mpResponse.status === 400 &&
+        (diagnostic.message?.includes("CC_VAL_433") === true ||
+          causeCodes.includes("CC_VAL_433"));
+
+      if (cardValidationFailed) {
+        return errorResponse(
+          "card_validation_failed",
+          "O Mercado Pago não conseguiu validar os dados do cartão. Confira o nome do titular, e-mail, CPF, número, validade e código de segurança. Por segurança, não repita a tentativa imediatamente; aguarde alguns minutos antes de tentar novamente.",
+          422
+        );
+      }
 
       return errorResponse(
         "mercadopago_result_uncertain",
