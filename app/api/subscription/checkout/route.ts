@@ -1,4 +1,3 @@
-
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -322,6 +321,7 @@ async function getErrorDiagnostic(response: Response) {
     httpStatus: number;
     error?: string;
     message?: string;
+    statusDetail?: string;
     causeCodes?: Array<string | number>;
     causeDetails?: Array<{
       code: string | number;
@@ -339,9 +339,11 @@ async function getErrorDiagnostic(response: Response) {
     const data = body as Record<string, unknown>;
     const error = sanitizeDiagnosticText(data.error, 100);
     const message = sanitizeDiagnosticText(data.message, 200);
+    const statusDetail = sanitizeDiagnosticText(data.status_detail, 100);
 
     if (error) diagnostic.error = error;
     if (message) diagnostic.message = message;
+    if (statusDetail) diagnostic.statusDetail = statusDetail;
 
     if (Array.isArray(data.cause)) {
       const codes: Array<string | number> = [];
@@ -775,6 +777,29 @@ export async function POST(request: Request) {
       );
 
       const causeCodes = diagnostic.causeCodes ?? [];
+      const causeDetails = diagnostic.causeDetails ?? [];
+
+      const diagnosticCodes = [
+        diagnostic.statusDetail,
+        diagnostic.error,
+        diagnostic.message,
+        ...causeCodes.map(String),
+        ...causeDetails.map((item) => String(item.code)),
+        ...causeDetails.map((item) => item.description ?? ""),
+      ];
+
+      const highRiskRejected = diagnosticCodes.some((value) =>
+        /cc_rejected_high_risk/i.test(value ?? "")
+      );
+
+      if (highRiskRejected) {
+        return errorResponse(
+          "card_rejected_high_risk",
+          "O Mercado Pago recusou esta tentativa por uma análise de risco e segurança. Esse retorno não confirma falta de saldo nem identifica um problema específico do cartão. Não repita a tentativa imediatamente; verifique a situação com o suporte do Mercado Pago antes de tentar novamente.",
+          422
+        );
+      }
+
       const cardValidationFailed =
         mpResponse.status === 400 &&
         (diagnostic.message?.includes("CC_VAL_433") === true ||
