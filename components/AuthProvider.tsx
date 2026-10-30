@@ -74,8 +74,10 @@ function isSubscriptionInfo(value: unknown): value is SubscriptionInfo {
     if (
       data.authenticated !== true ||
       !accessStatus ||
-      data.currentPeriodEnd === null ||
-      Date.parse(data.currentPeriodEnd) <= Date.now()
+      (
+        data.currentPeriodEnd !== null &&
+        Date.parse(data.currentPeriodEnd) <= Date.now()
+      )
     ) {
       return false;
     }
