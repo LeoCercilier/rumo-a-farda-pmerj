@@ -58,16 +58,15 @@ function noAccess(
 }
 
 /**
- * Fonte de verdade do acesso Premium.
+ * Verifica primeiro uma concessão manual de Premium.
  *
- * Acesso permitido somente quando:
- * - há usuário autenticado;
- * - o estado é active ou cancelled;
- * - existe uma data final válida e futura.
+ * A concessão manual é independente do Mercado Pago:
+ * - status active;
+ * - início já alcançado;
+ * - sem data final ou com data final futura.
  *
- * "cancelled" significa que a renovação foi cancelada,
- * mas o período já pago ainda pode estar vigente.
- * O cancelamento nunca cria nem estende um período pago.
+ * Se não houver concessão manual válida, mantém a
+ * verificação original da assinatura do Mercado Pago.
  */
 export async function getSubscriptionForUser(
   supabase: SupabaseClient,
@@ -82,6 +81,45 @@ export async function getSubscriptionForUser(
   }
 
   try {
+    const { data: manualGrant } = await supabase
+      .from("manual_premium_grants")
+      .select("status, starts_at, ends_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (manualGrant?.status === "active") {
+      const startsAt =
+        typeof manualGrant.starts_at === "string"
+          ? Date.parse(manualGrant.starts_at)
+          : Number.NaN;
+
+      const endsAt =
+        typeof manualGrant.ends_at === "string"
+          ? Date.parse(manualGrant.ends_at)
+          : null;
+
+      const now = Date.now();
+
+      const validStart =
+        Number.isFinite(startsAt) && startsAt <= now;
+
+      const validEnd =
+        endsAt === null ||
+        (Number.isFinite(endsAt) && endsAt > now);
+
+      if (validStart && validEnd) {
+        return {
+          authenticated: true,
+          hasAccess: true,
+          status: "active",
+          currentPeriodEnd: manualGrant.ends_at ?? null,
+          planId: null,
+          message: "Acesso Premium concedido manualmente.",
+        };
+      }
+    }
+
+    // Mantém a verificação original do Mercado Pago.
     const { data, error } = await supabase
       .from("subscriptions")
       .select("status, current_period_end, plan_id")
@@ -105,10 +143,12 @@ export async function getSubscriptionForUser(
     }
 
     const status = normalizeStatus(data.status);
+
     const currentPeriodEnd =
       typeof data.current_period_end === "string"
         ? data.current_period_end
         : null;
+
     const planId =
       typeof data.plan_id === "string" ? data.plan_id : null;
 
