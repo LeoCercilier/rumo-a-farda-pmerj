@@ -1,5 +1,6 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export type SubscriptionStatus =
   | "none"
@@ -29,6 +30,11 @@ const VALID_STATUSES: readonly SubscriptionStatus[] = [
   "rejected",
 ];
 
+type AccessInterval = {
+  start: number;
+  end: number;
+};
+
 function normalizeStatus(value: unknown): SubscriptionStatus {
   if (
     typeof value === "string" &&
@@ -57,17 +63,40 @@ function noAccess(
   };
 }
 
-/**
- * Verifica primeiro uma concessão manual de Premium.
- *
- * A concessão manual é independente do Mercado Pago:
- * - status active;
- * - início já alcançado;
- * - sem data final ou com data final futura.
- *
- * Se não houver concessão manual válida, mantém a
- * verificação original da assinatura do Mercado Pago.
- */
+function validTimestamp(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function findCurrentAccessEnd(
+  intervals: AccessInterval[],
+  now: number
+): number | null {
+  const sorted = intervals
+    .filter((item) => item.end > item.start)
+    .sort((a, b) => a.start - b.start);
+
+  let merged: AccessInterval[] = [];
+
+  for (const interval of sorted) {
+    const previous = merged[merged.length - 1];
+
+    if (previous && interval.start <= previous.end) {
+      previous.end = Math.max(previous.end, interval.end);
+    } else {
+      merged.push({ ...interval });
+    }
+  }
+
+  const current = merged.find(
+    (interval) => interval.start <= now && interval.end > now
+  );
+
+  return current?.end ?? null;
+}
+
 export async function getSubscriptionForUser(
   supabase: SupabaseClient,
   userId: string | null
@@ -88,26 +117,20 @@ export async function getSubscriptionForUser(
       .maybeSingle();
 
     if (manualGrant?.status === "active") {
-      const startsAt =
-        typeof manualGrant.starts_at === "string"
-          ? Date.parse(manualGrant.starts_at)
-          : Number.NaN;
-
+      const startsAt = validTimestamp(manualGrant.starts_at);
       const endsAt =
-        typeof manualGrant.ends_at === "string"
-          ? Date.parse(manualGrant.ends_at)
-          : null;
+        manualGrant.ends_at === null
+          ? null
+          : validTimestamp(manualGrant.ends_at);
 
       const now = Date.now();
 
-      const validStart =
-        Number.isFinite(startsAt) && startsAt <= now;
-
-      const validEnd =
-        endsAt === null ||
-        (Number.isFinite(endsAt) && endsAt > now);
-
-      if (validStart && validEnd) {
+      if (
+        startsAt !== null &&
+        startsAt <= now &&
+        (manualGrant.ends_at === null ||
+          (endsAt !== null && endsAt > now))
+      ) {
         return {
           authenticated: true,
           hasAccess: true,
@@ -119,14 +142,91 @@ export async function getSubscriptionForUser(
       }
     }
 
-    // Mantém a verificação original do Mercado Pago.
-    const { data, error } = await supabase
-      .from("subscriptions")
-      .select("status, current_period_end, plan_id")
-      .eq("user_id", userId)
-      .maybeSingle();
+    // Pix é consultado exclusivamente no servidor, usando
+    // o cliente administrativo. Nenhuma chave privada vai ao cliente.
+    const admin = createAdminClient();
 
-    if (error) {
+    const [subscriptionResult, pixResult] = await Promise.all([
+      supabase
+        .from("subscriptions")
+        .select(
+          "status, current_period_start, current_period_end, plan_id"
+        )
+        .eq("user_id", userId)
+        .maybeSingle(),
+
+      admin
+        .from("pix_payments")
+        .select("amount, currency, status, access_starts_at, access_until")
+        .eq("user_id", userId)
+        .eq("status", "approved")
+        .eq("currency", "BRL")
+        .eq("amount", 19.9)
+        .not("access_starts_at", "is", null)
+        .not("access_until", "is", null),
+    ]);
+
+    const now = Date.now();
+    const intervals: AccessInterval[] = [];
+
+    const subscription = subscriptionResult.data;
+
+    if (
+      subscription &&
+      (subscription.status === "active" ||
+        subscription.status === "cancelled")
+    ) {
+      const end = validTimestamp(subscription.current_period_end);
+      const start = validTimestamp(subscription.current_period_start);
+
+      if (end !== null && end > now) {
+        intervals.push({
+          start: start ?? Number.NEGATIVE_INFINITY,
+          end,
+        });
+      }
+    }
+
+    if (!pixResult.error && Array.isArray(pixResult.data)) {
+      for (const payment of pixResult.data) {
+        const start = validTimestamp(payment.access_starts_at);
+        const end = validTimestamp(payment.access_until);
+
+        if (
+          Number(payment.amount) === 19.9 &&
+          payment.currency === "BRL" &&
+          payment.status === "approved" &&
+          start !== null &&
+          end !== null &&
+          end > start
+        ) {
+          intervals.push({ start, end });
+        }
+      }
+    }
+
+    const accessEnd = findCurrentAccessEnd(intervals, now);
+
+    if (accessEnd !== null) {
+      return {
+        authenticated: true,
+        hasAccess: true,
+        status:
+          subscription?.status === "cancelled" &&
+          validTimestamp(subscription.current_period_end) !== null &&
+          validTimestamp(subscription.current_period_end)! > now
+            ? "cancelled"
+            : "active",
+        currentPeriodEnd: new Date(accessEnd).toISOString(),
+        planId:
+          typeof subscription?.plan_id === "string"
+            ? subscription.plan_id
+            : "pix",
+        message: "Acesso Premium ativo.",
+      };
+    }
+
+    if (subscriptionResult.error) {
       return noAccess(
         true,
         "none",
@@ -134,7 +234,15 @@ export async function getSubscriptionForUser(
       );
     }
 
-    if (!data) {
+    if (pixResult.error) {
+      return noAccess(
+        true,
+        "none",
+        "Não foi possível confirmar seus pagamentos Pix. Tente novamente."
+      );
+    }
+
+    if (!subscription) {
       return noAccess(
         true,
         "none",
@@ -142,15 +250,17 @@ export async function getSubscriptionForUser(
       );
     }
 
-    const status = normalizeStatus(data.status);
+    const status = normalizeStatus(subscription.status);
 
     const currentPeriodEnd =
-      typeof data.current_period_end === "string"
-        ? data.current_period_end
+      typeof subscription.current_period_end === "string"
+        ? subscription.current_period_end
         : null;
 
     const planId =
-      typeof data.plan_id === "string" ? data.plan_id : null;
+      typeof subscription.plan_id === "string"
+        ? subscription.plan_id
+        : null;
 
     if (status !== "active" && status !== "cancelled") {
       return noAccess(
@@ -188,7 +298,7 @@ export async function getSubscriptionForUser(
       );
     }
 
-    if (endTimestamp <= Date.now()) {
+    if (endTimestamp <= now) {
       return noAccess(
         true,
         status === "active" ? "expired" : "cancelled",
@@ -211,7 +321,9 @@ export async function getSubscriptionForUser(
           ? "A renovação foi cancelada. Seu acesso continua até o fim do período pago."
           : undefined,
     };
-  } catch {
+  } catch (error) {
+    console.error("[subscription] Falha ao verificar acesso.");
+
     return noAccess(
       true,
       "none",
