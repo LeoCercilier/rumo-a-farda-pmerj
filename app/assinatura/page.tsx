@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -10,6 +11,7 @@ import {
   useState,
 } from "react";
 import { useAuth } from "@/components/AuthProvider";
+import PixCheckout from "@/components/PixCheckout";
 
 type CardFormData = {
   token?: string;
@@ -1213,6 +1215,8 @@ function AssinaturaContent() {
                 <p className="subscription-account-email">{user.email}</p>
               </div>
             </div>
+
+            <PixCheckout onPaid={refreshSubscription} />
 
             {!publicKey && (
               <div
