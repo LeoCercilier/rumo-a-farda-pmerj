@@ -1040,7 +1040,10 @@ function AssinaturaContent() {
 
   const hasAccess = subscription?.hasAccess === true;
   const status = subscription?.status ?? "none";
-  const canCancel = status === "active" || status === "pending";
+  const canCancel =
+  (status === "active" || status === "pending") &&
+  typeof subscription?.planId === "string" &&
+  subscription.planId !== "pix";
 
   return (
     <main className="subscription-page">
