@@ -20,7 +20,6 @@ type MercadoPagoPayment = {
 
 function amountInCents(value: unknown): number | null {
   const amount = Number(value);
-
   return Number.isFinite(amount) && amount >= 0
     ? Math.round(amount * 100)
     : null;
@@ -30,7 +29,7 @@ function fail(error: string, status: number) {
   return NextResponse.json({ error }, { status });
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     if (process.env.BILLING_ENABLED !== "true") {
       return fail("billing_disabled", 503);
@@ -52,6 +51,20 @@ export async function POST() {
       return fail("unauthenticated", 401);
     }
 
+    let body: { paymentId?: string };
+
+    try {
+      body = await request.json();
+    } catch {
+      return fail("invalid_body", 400);
+    }
+
+    const paymentId = body.paymentId?.trim();
+
+    if (!paymentId || !/^\d+$/.test(paymentId)) {
+      return fail("invalid_payment_id", 400);
+    }
+
     const admin = createAdminClient();
 
     const { data: record, error: lookupError } = await admin
@@ -60,17 +73,15 @@ export async function POST() {
         "id, user_id, external_reference, mp_payment_id, amount, currency, status"
       )
       .eq("user_id", user.id)
+      .eq("mp_payment_id", paymentId)
       .eq("status", "pending")
-      .not("mp_payment_id", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
       .maybeSingle();
 
     if (lookupError) {
       return fail("payment_lookup_failed", 503);
     }
 
-    if (!record || !record.mp_payment_id) {
+    if (!record) {
       return NextResponse.json({
         processed: false,
         reason: "no_pending_pix",
@@ -87,9 +98,7 @@ export async function POST() {
     }
 
     const response = await fetch(
-      `https://api.mercadopago.com/v1/payments/${encodeURIComponent(
-        record.mp_payment_id
-      )}`,
+      `https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -107,7 +116,7 @@ export async function POST() {
       (await response.json()) as MercadoPagoPayment;
 
     if (
-      String(payment.id) !== record.mp_payment_id ||
+      String(payment.id) !== paymentId ||
       payment.external_reference !== record.external_reference ||
       payment.payment_method_id !== "pix" ||
       payment.currency_id !== CURRENCY ||
@@ -136,7 +145,7 @@ export async function POST() {
 
     const { data: finalized, error: finalizeError } =
       await admin.rpc("finalize_pix_payment", {
-        p_mp_payment_id: record.mp_payment_id,
+        p_mp_payment_id: paymentId,
         p_target_status: status,
         p_paid_at:
           status === "approved"
