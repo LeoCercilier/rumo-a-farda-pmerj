@@ -65,6 +65,7 @@ export default function PixCheckout({ onPaid }: Props) {
         return;
       }
 
+      paidRef.current = false;
       setPayment(data as PixPaymentData);
       setMessage(
         "Pix gerado. Após o pagamento, aguarde a confirmação automática."
@@ -97,6 +98,7 @@ export default function PixCheckout({ onPaid }: Props) {
 
     let stopped = false;
     let checking = false;
+    let lastReconciliation = 0;
 
     const checkStatus = async () => {
       if (stopped || checking || paidRef.current) return;
@@ -104,6 +106,32 @@ export default function PixCheckout({ onPaid }: Props) {
       checking = true;
 
       try {
+        const now = Date.now();
+
+        // Consulta o Mercado Pago diretamente a cada 30 segundos.
+        if (now - lastReconciliation >= 30000) {
+          lastReconciliation = now;
+
+          try {
+            await fetch("/api/subscription/pix/reconcile", {
+              method: "POST",
+              credentials: "include",
+              cache: "no-store",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                paymentId: payment.paymentId,
+              }),
+            });
+          } catch {
+            // A próxima rodada tentará reconciliar novamente.
+          }
+        }
+
+        if (stopped || paidRef.current) return;
+
+        // Mantém a consulta de acesso já existente.
         const response = await fetch("/api/subscription/status", {
           method: "GET",
           credentials: "include",
@@ -116,7 +144,9 @@ export default function PixCheckout({ onPaid }: Props) {
 
         if (data.hasAccess === true && !paidRef.current) {
           paidRef.current = true;
-          setMessage("Pagamento confirmado! Seu acesso Premium foi liberado.");
+          setMessage(
+            "Pagamento confirmado! Seu acesso Premium foi liberado."
+          );
           await onPaidRef.current();
         }
       } catch {
