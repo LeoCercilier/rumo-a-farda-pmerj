@@ -476,7 +476,6 @@ const styles = `
     font-size: 13px;
   }
 
-  /* Aviso de segurança corrigido: conteúdo contido e quebra de linha. */
   .subscription-secure-note {
     display: grid;
     grid-template-columns: 18px minmax(0, 1fr);
@@ -1019,7 +1018,9 @@ function AssinaturaContent() {
                 <span className="subscription-price-value">
                   R$ 19,90
                 </span>
-                <span className="subscription-price-period">/ mês</span>
+                <span className="subscription-price-period">
+                  Pix por 30 dias ou cartão mensal
+                </span>
               </div>
             </div>
 
@@ -1078,10 +1079,11 @@ function AssinaturaContent() {
           <div className="subscription-plan-top">
             <div>
               <h2 className="subscription-plan-name">
-                Plano mensal Premium
+                Acesso Premium
               </h2>
               <p className="subscription-plan-description">
-                Para manter sua preparação para Soldado PMERJ em dia.
+                Escolha entre pagamento avulso por Pix ou assinatura mensal
+                por cartão para manter sua preparação para Soldado PMERJ em dia.
               </p>
             </div>
             <span className="subscription-plan-badge">PREMIUM</span>
@@ -1089,13 +1091,15 @@ function AssinaturaContent() {
 
           <div className="subscription-price">
             <span className="subscription-price-value">R$ 19,90</span>
-            <span className="subscription-price-period">por mês</span>
+            <span className="subscription-price-period">
+              Pix: 30 dias · Cartão: mensal
+            </span>
           </div>
 
           <p className="subscription-plan-note">
-            Cobrança recorrente mensal, sem prazo predeterminado. Confira
-            todas as condições apresentadas pelo Mercado Pago antes de
-            autorizar a contratação.
+            No Pix, o pagamento é único e libera 30 dias de acesso, sem
+            renovação automática. No cartão, a cobrança é recorrente mensal.
+            Confira as condições antes de autorizar o pagamento.
           </p>
         </section>
 
@@ -1192,206 +1196,238 @@ function AssinaturaContent() {
         </section>
 
         {!hasAccess && (
-          <section className="subscription-card">
-            <div className="subscription-section-heading">
-              <span className="subscription-step">02</span>
-              <div>
-                <h2 className="subscription-section-title">
-                  Dados para pagamento
-                </h2>
-                <p className="subscription-section-description">
-                  Preencha os dados solicitados para autorizar a cobrança
-                  recorrente mensal.
-                </p>
-              </div>
-            </div>
-
-            <div className="subscription-account">
-              <span className="subscription-account-icon">✉</span>
-              <div style={{ minWidth: 0 }}>
-                <p className="subscription-account-label">
-                  Conta vinculada à assinatura
-                </p>
-                <p className="subscription-account-email">{user.email}</p>
-              </div>
-            </div>
-
-            <PixCheckout onPaid={refreshSubscription} />
-
-            {!publicKey && (
-              <div
-                className="subscription-alert subscription-alert-error"
-                role="alert"
-              >
-                A configuração pública do Mercado Pago não está disponível.
-                Entre em contato com o suporte.
-              </div>
-            )}
-
-            {checkoutError && (
-              <div
-                className="subscription-alert subscription-alert-error"
-                role="alert"
-              >
-                {checkoutError}
-              </div>
-            )}
-
-            <form
-              id="form-checkout"
-              className="subscription-form"
-              noValidate
-            >
-              <div className="subscription-field subscription-field-wide">
-                <label htmlFor="form-checkout__cardholderName">
-                  Nome impresso no cartão
-                </label>
-                <input
-                  id="form-checkout__cardholderName"
-                  type="text"
-                  autoComplete="cc-name"
-                  placeholder="Nome como aparece no cartão"
-                  required
-                />
+          <>
+            <section className="subscription-card">
+              <div className="subscription-section-heading">
+                <span className="subscription-step">02</span>
+                <div>
+                  <h2 className="subscription-section-title">
+                    Formas de pagamento
+                  </h2>
+                  <p className="subscription-section-description">
+                    Escolha uma modalidade para liberar seu acesso Premium.
+                    Cada forma de pagamento tem condições próprias.
+                  </p>
+                </div>
               </div>
 
-              <div className="subscription-field subscription-field-wide">
-                <label htmlFor="form-checkout__cardholderEmail">
-                  E-mail do titular
-                </label>
-                <input
-                  id="form-checkout__cardholderEmail"
-                  type="email"
-                  autoComplete="email"
-                  defaultValue={user.email ?? ""}
-                  placeholder="E-mail do titular"
-                  required
-                />
+              <div className="subscription-account">
+                <span className="subscription-account-icon">✉</span>
+                <div style={{ minWidth: 0 }}>
+                  <p className="subscription-account-label">
+                    Conta vinculada ao acesso Premium
+                  </p>
+                  <p className="subscription-account-email">{user.email}</p>
+                </div>
+              </div>
+            </section>
+
+            <section className="subscription-card">
+              <div className="subscription-section-heading">
+                <span className="subscription-step">PIX</span>
+                <div>
+                  <h2 className="subscription-section-title">
+                    Pagamento por Pix
+                  </h2>
+                  <p className="subscription-section-description">
+                    R$ 19,90 em pagamento único. Libera 30 dias de Premium,
+                    sem renovação automática.
+                  </p>
+                </div>
               </div>
 
-              <div className="subscription-form-divider" />
+              <PixCheckout onPaid={refreshSubscription} />
+            </section>
 
-              <p className="subscription-form-subheading">
-                DADOS DO CARTÃO
-              </p>
+            <section className="subscription-card">
+              <div className="subscription-section-heading">
+                <span className="subscription-step">03</span>
+                <div>
+                  <h2 className="subscription-section-title">
+                    Assinatura por cartão
+                  </h2>
+                  <p className="subscription-section-description">
+                    R$ 19,90 por mês, com cobrança recorrente mensal até o
+                    cancelamento.
+                  </p>
+                </div>
+              </div>
 
-              <div className="subscription-field subscription-field-wide">
-                <label htmlFor="form-checkout__cardNumber">
-                  Número do cartão
-                </label>
+              {!publicKey && (
                 <div
-                  id="form-checkout__cardNumber"
-                  className="subscription-card-frame"
-                  aria-label="Número do cartão"
-                />
-              </div>
-
-              <div className="subscription-field">
-                <label htmlFor="form-checkout__expirationDate">
-                  Validade
-                </label>
-                <div
-                  id="form-checkout__expirationDate"
-                  className="subscription-card-frame"
-                  aria-label="Validade do cartão"
-                />
-              </div>
-
-              <div className="subscription-field">
-                <label htmlFor="form-checkout__securityCode">
-                  Código de segurança
-                </label>
-                <div
-                  id="form-checkout__securityCode"
-                  className="subscription-card-frame"
-                  aria-label="Código de segurança do cartão"
-                />
-              </div>
-
-              <div className="subscription-form-divider" />
-
-              <p className="subscription-form-subheading">
-                DADOS DO TITULAR
-              </p>
-
-              <div className="subscription-field">
-                <label htmlFor="form-checkout__identificationType">
-                  Tipo de documento
-                </label>
-                <select
-                  id="form-checkout__identificationType"
-                  required
-                  defaultValue=""
+                  className="subscription-alert subscription-alert-error"
+                  role="alert"
                 >
-                  <option value="" disabled>
-                    Selecione
-                  </option>
-                </select>
-              </div>
+                  A configuração pública do Mercado Pago não está disponível.
+                  Entre em contato com o suporte.
+                </div>
+              )}
 
-              <div className="subscription-field">
-                <label htmlFor="form-checkout__identificationNumber">
-                  Número do documento
-                </label>
-                <input
-                  id="form-checkout__identificationNumber"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="CPF ou documento"
-                  required
-                />
-              </div>
-
-              <div className="subscription-field">
-                <label htmlFor="form-checkout__issuer">
-                  Banco emissor
-                </label>
-                <select id="form-checkout__issuer" defaultValue="">
-                  <option value="">Selecione, se solicitado</option>
-                </select>
-              </div>
-
-              <div className="subscription-field">
-                <label htmlFor="form-checkout__installments">
-                  Parcelas
-                </label>
-                <select
-                  id="form-checkout__installments"
-                  defaultValue=""
+              {checkoutError && (
+                <div
+                  className="subscription-alert subscription-alert-error"
+                  role="alert"
                 >
-                  <option value="">Selecione, se solicitado</option>
-                </select>
-              </div>
+                  {checkoutError}
+                </div>
+              )}
 
-              <button
-                id="form-checkout__submit"
-                className="subscription-primary-button subscription-submit"
-                type="submit"
-                disabled={
-                  !publicKey ||
-                  !cardFormReady ||
-                  checkoutLoading ||
-                  cancelLoading
-                }
+              <form
+                id="form-checkout"
+                className="subscription-form"
+                noValidate
               >
-                {checkoutLoading
-                  ? "PROCESSANDO..."
-                  : cardFormReady
-                    ? "AUTORIZAR ASSINATURA · R$ 19,90/MÊS"
-                    : "CARREGANDO FORMULÁRIO..."}
-              </button>
+                <div className="subscription-field subscription-field-wide">
+                  <label htmlFor="form-checkout__cardholderName">
+                    Nome impresso no cartão
+                  </label>
+                  <input
+                    id="form-checkout__cardholderName"
+                    type="text"
+                    autoComplete="cc-name"
+                    placeholder="Nome como aparece no cartão"
+                    required
+                  />
+                </div>
 
-              <div className="subscription-secure-note" role="note">
-                <span aria-hidden="true">✓</span>
-                <span>
-                  Os dados do cartão são tratados pelo formulário do
-                  Mercado Pago. O aplicativo não armazena o número completo
-                  nem o código de segurança do cartão. O acesso Premium
-                  depende da confirmação necessária pelo servidor.
-                </span>
-              </div>
-            </form>
-          </section>
+                <div className="subscription-field subscription-field-wide">
+                  <label htmlFor="form-checkout__cardholderEmail">
+                    E-mail do titular
+                  </label>
+                  <input
+                    id="form-checkout__cardholderEmail"
+                    type="email"
+                    autoComplete="email"
+                    defaultValue={user.email ?? ""}
+                    placeholder="E-mail do titular"
+                    required
+                  />
+                </div>
+
+                <div className="subscription-form-divider" />
+
+                <p className="subscription-form-subheading">
+                  DADOS DO CARTÃO
+                </p>
+
+                <div className="subscription-field subscription-field-wide">
+                  <label htmlFor="form-checkout__cardNumber">
+                    Número do cartão
+                  </label>
+                  <div
+                    id="form-checkout__cardNumber"
+                    className="subscription-card-frame"
+                    aria-label="Número do cartão"
+                  />
+                </div>
+
+                <div className="subscription-field">
+                  <label htmlFor="form-checkout__expirationDate">
+                    Validade
+                  </label>
+                  <div
+                    id="form-checkout__expirationDate"
+                    className="subscription-card-frame"
+                    aria-label="Validade do cartão"
+                  />
+                </div>
+
+                <div className="subscription-field">
+                  <label htmlFor="form-checkout__securityCode">
+                    Código de segurança
+                  </label>
+                  <div
+                    id="form-checkout__securityCode"
+                    className="subscription-card-frame"
+                    aria-label="Código de segurança do cartão"
+                  />
+                </div>
+
+                <div className="subscription-form-divider" />
+
+                <p className="subscription-form-subheading">
+                  DADOS DO TITULAR
+                </p>
+
+                <div className="subscription-field">
+                  <label htmlFor="form-checkout__identificationType">
+                    Tipo de documento
+                  </label>
+                  <select
+                    id="form-checkout__identificationType"
+                    required
+                    defaultValue=""
+                  >
+                    <option value="" disabled>
+                      Selecione
+                    </option>
+                  </select>
+                </div>
+
+                <div className="subscription-field">
+                  <label htmlFor="form-checkout__identificationNumber">
+                    Número do documento
+                  </label>
+                  <input
+                    id="form-checkout__identificationNumber"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="CPF ou documento"
+                    required
+                  />
+                </div>
+
+                <div className="subscription-field">
+                  <label htmlFor="form-checkout__issuer">
+                    Banco emissor
+                  </label>
+                  <select id="form-checkout__issuer" defaultValue="">
+                    <option value="">Selecione, se solicitado</option>
+                  </select>
+                </div>
+
+                <div className="subscription-field">
+                  <label htmlFor="form-checkout__installments">
+                    Parcelas
+                  </label>
+                  <select
+                    id="form-checkout__installments"
+                    defaultValue=""
+                  >
+                    <option value="">Selecione, se solicitado</option>
+                  </select>
+                </div>
+
+                <button
+                  id="form-checkout__submit"
+                  className="subscription-primary-button subscription-submit"
+                  type="submit"
+                  disabled={
+                    !publicKey ||
+                    !cardFormReady ||
+                    checkoutLoading ||
+                    cancelLoading
+                  }
+                >
+                  {checkoutLoading
+                    ? "PROCESSANDO..."
+                    : cardFormReady
+                      ? "AUTORIZAR ASSINATURA · R$ 19,90/MÊS"
+                      : "CARREGANDO FORMULÁRIO..."}
+                </button>
+
+                <div className="subscription-secure-note" role="note">
+                  <span aria-hidden="true">✓</span>
+                  <span>
+                    Os dados do cartão são tratados pelo formulário do
+                    Mercado Pago. O aplicativo não armazena o número completo
+                    nem o código de segurança do cartão. O acesso Premium
+                    depende da confirmação necessária pelo servidor.
+                  </span>
+                </div>
+              </form>
+            </section>
+          </>
         )}
 
         <footer className="subscription-footer">
